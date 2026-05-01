@@ -1,0 +1,454 @@
+@import "./base.css";
+@import "tailwindcss";
+
+/* ============================================
+   UNIFIED THEME SYSTEM
+   All colors defined as CSS vars, toggled by .dark class.
+   Tailwind @theme references these vars.
+   ============================================ */
+
+:root {
+  --color-background: #f8fafc;
+  --color-foreground: #0f172a;
+  --color-card: rgba(255, 255, 255, 0.95);
+  --color-card-solid: #ffffff;
+  --color-border: rgba(15, 23, 42, 0.12);
+  --color-nav: rgba(15, 23, 42, 0.05);
+  --color-primary: #3b82f6;
+  --color-primary-rgb: 59, 130, 246;
+  --color-primary-hover: #2563eb;
+  --color-secondary: #64748b;
+  --color-accent: #ef4444;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-muted: #64748b;
+  --color-surface: #f1f5f9;
+  --color-surface-hover: #e2e8f0;
+  --shadow-card: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --shadow-card-hover: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  --shadow-glow: 0 0 20px rgba(59, 130, 246, 0.1);
+}
+
+
+.dark {
+  --color-background: #020617;
+  --color-foreground: #f1f5f9;
+  --color-card: rgba(15, 23, 42, 0.65);
+  --color-card-solid: #0f172a;
+  --color-border: rgba(248, 250, 252, 0.08);
+  --color-nav: rgba(0, 0, 0, 0.4);
+  --color-primary: #38bdf8;
+  --color-primary-rgb: 56, 189, 248;
+  --color-primary-hover: #7dd3fc;
+  --color-secondary: #64748b;
+  --color-accent: #f43f5e;
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-muted: #475569;
+  --color-surface: #1e293b;
+  --color-surface-hover: #334155;
+  --shadow-card: 0 4px 30px rgba(0, 0, 0, 0.25);
+  --shadow-card-hover: 0 10px 40px rgba(0, 0, 0, 0.4), 0 0 20px rgba(56, 189, 248, 0.08);
+  --shadow-glow: 0 0 30px rgba(56, 189, 248, 0.2);
+}
+
+
+@theme {
+  --color-background: var(--color-background);
+  --color-foreground: var(--color-foreground);
+  --color-card: var(--color-card);
+  --color-card-solid: var(--color-card-solid);
+  --color-border: var(--color-border);
+  --color-nav: var(--color-nav);
+  --color-primary: var(--color-primary);
+  --color-primary-hover: var(--color-primary-hover);
+  --color-secondary: var(--color-secondary);
+  --color-accent: var(--color-accent);
+  --color-success: var(--color-success);
+  --color-warning: var(--color-warning);
+  --color-muted: var(--color-muted);
+  --color-surface: var(--color-surface);
+  --color-surface-hover: var(--color-surface-hover);
+}
+
+
+/* ============================================
+   BASE STYLES
+   ============================================ */
+
+@layer base {
+
+  html,
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    overflow-x: hidden;
+    overflow-y: auto;
+    min-height: 100vh;
+    transition: background-color 0.4s ease, color 0.4s ease;
+  }
+
+  ::selection {
+    background-color: var(--color-primary);
+    color: white;
+    opacity: 0.9;
+  }
+}
+
+/* ============================================
+   COMPONENT STYLES
+   ============================================ */
+
+@layer components {
+
+  /* Glass Card */
+  .glass-card {
+    background: var(--color-card);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--color-border);
+    border-radius: 16px;
+    box-shadow: var(--shadow-card);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+      box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+      border-color 0.3s ease;
+  }
+
+  .glass-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-card-hover);
+    border-color: var(--color-primary);
+  }
+
+  /* Glass Panel (TopBar, etc.) */
+  .glass-panel {
+    background: var(--color-card);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--color-border);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  }
+
+  /* Status Badge */
+  .status-badge {
+    padding: 4px 12px;
+    border-radius: 9999px;
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    border: 1px solid;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.3s ease;
+  }
+
+  /* Metric Label */
+  .metric-label {
+    font-size: 9px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    color: var(--color-muted);
+    line-height: 1;
+  }
+
+  /* Usage Bar */
+  .usage-bar-track {
+    height: 8px;
+    width: 100%;
+    background: var(--color-surface);
+    border-radius: 9999px;
+    overflow: hidden;
+  }
+
+  .usage-bar-fill {
+    height: 100%;
+    border-radius: 9999px;
+    background: linear-gradient(90deg, var(--color-primary) 0%, var(--color-primary-hover) 100%);
+    transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+  }
+
+  .usage-bar-fill::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.15) 50%,
+        transparent 100%);
+    background-size: 200% 100%;
+    animation: shimmer 2.5s infinite linear;
+  }
+
+  /* Primary Gradient */
+  .primary-gradient {
+    background: linear-gradient(135deg, var(--color-primary) 0%, #6366f1 100%);
+  }
+
+  /* Scan Log Window */
+  .scan-log {
+    background: var(--color-card-solid);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.6;
+    padding: 16px;
+    max-height: 300px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  /* Button styles */
+  .btn-primary {
+    background: linear-gradient(135deg, var(--color-primary) 0%, #6366f1 100%);
+    color: white;
+    font-weight: 700;
+    font-size: 12px;
+    padding: 10px 20px;
+    border-radius: 12px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-glow);
+  }
+
+  .btn-primary:active {
+    transform: translateY(0) scale(0.98);
+  }
+
+  .btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+
+  .btn-danger {
+    background: linear-gradient(135deg, var(--color-accent) 0%, #dc2626 100%);
+    color: white;
+    font-weight: 700;
+    font-size: 12px;
+    padding: 10px 20px;
+    border-radius: 12px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .btn-danger:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.3);
+  }
+
+  .btn-danger:active {
+    transform: translateY(0) scale(0.98);
+  }
+
+  .btn-warning {
+    background: linear-gradient(135deg, var(--color-warning) 0%, #d97706 100%);
+    color: white;
+    font-weight: 700;
+    font-size: 12px;
+    padding: 10px 20px;
+    border-radius: 12px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .btn-warning:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 0 20px rgba(245, 158, 11, 0.3);
+  }
+
+  .btn-warning:active {
+    transform: translateY(0) scale(0.98);
+  }
+
+  .btn-warning:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+
+  /* Tab Navigation */
+  .tab-btn {
+    padding: 8px 20px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    background: transparent;
+    color: var(--color-muted);
+  }
+
+  .tab-btn:hover {
+    background: var(--color-surface);
+    color: var(--color-foreground);
+  }
+
+  .tab-btn.active {
+    background: var(--color-primary);
+    color: white;
+    border-color: var(--color-primary);
+    box-shadow: 0 2px 10px rgba(59, 130, 246, 0.3);
+  }
+}
+
+/* ============================================
+   KEYFRAME ANIMATIONS
+   ============================================ */
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-dot {
+
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.5;
+    transform: scale(1.5);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes wave-idle {
+  0% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(1.5px);
+  }
+
+  100% {
+    transform: translateY(0);
+  }
+}
+
+.idle-wave .recharts-area-area,
+.idle-wave .recharts-area-curve {
+  animation: wave-idle 3s ease-in-out infinite;
+}
+
+/* ============================================
+   UTILITY ANIMATIONS
+   ============================================ */
+
+@utility animate-fade-in {
+  animation: fade-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@utility animate-slide-up {
+  animation: slide-up 0.6s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@utility animate-pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+@utility animate-spin-slow {
+  animation: spin 3s linear infinite;
+}
+
+@utility glass-panel {
+  background: var(--color-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--color-border);
+}
+
+@utility primary-gradient {
+  background: linear-gradient(135deg, var(--color-primary) 0%, #6366f1 100%);
+}
+
+/* ============================================
+   SCROLLBAR
+   ============================================ */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-muted);
+  border-radius: 9999px;
+  opacity: 0.4;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-primary);
+}
+
+@config "../../../../tailwind.config.js";
