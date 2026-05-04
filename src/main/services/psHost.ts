@@ -10,6 +10,7 @@ interface QueuedCommand {
 
 export class PowerShellHost {
   private static instance: PowerShellHost
+  private static instances: Map<string, PowerShellHost> = new Map()
   private process: ChildProcessWithoutNullStreams | null = null
   private commandQueue: QueuedCommand[] = []
   private currentOutput = ''
@@ -19,11 +20,11 @@ export class PowerShellHost {
     this.startProcess()
   }
 
-  public static getInstance(): PowerShellHost {
-    if (!PowerShellHost.instance) {
-      PowerShellHost.instance = new PowerShellHost()
+  public static getInstance(name: string = 'default'): PowerShellHost {
+    if (!PowerShellHost.instances.has(name)) {
+      PowerShellHost.instances.set(name, new PowerShellHost())
     }
-    return PowerShellHost.instance
+    return PowerShellHost.instances.get(name)!
   }
 
   private startProcess() {
@@ -41,6 +42,11 @@ export class PowerShellHost {
 
     this.process.stderr.on('data', (data: Buffer) => {
       // Often PowerShell writes warnings to stderr, we can just ignore them or log them
+    })
+    
+    this.process.stdin.on('error', (err) => {
+      console.error('[PS Host] Stdin error:', err)
+      // We don't need to do much here, the 'close' event will handle restart
     })
 
     this.process.on('close', () => {
@@ -87,7 +93,21 @@ export class PowerShellHost {
     const task = this.commandQueue[0]
     
     // Write command, then write marker to stdout
-    this.process.stdin.write(`${task.script}\nWrite-Output "${`__END_${task.id}__`}"\n`)
+    if (this.process.stdin.writable) {
+      try {
+        this.process.stdin.write(`${task.script}\nWrite-Output "${`__END_${task.id}__`}"\n`)
+      } catch (err) {
+        console.error('[PS Host] Write failed:', err)
+        this.isProcessing = false
+        this.commandQueue.shift()
+        task.resolve('')
+        this.processNext()
+      }
+    } else {
+      console.warn('[PS Host] Stdin not writable. Restarting...')
+      this.isProcessing = false
+      this.process?.kill() // This will trigger 'close' and restart
+    }
   }
 
   /**

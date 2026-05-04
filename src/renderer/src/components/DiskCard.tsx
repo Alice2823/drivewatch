@@ -116,7 +116,7 @@ export const DiskCard: React.FC<DiskCardProps> = React.memo(({ data }) => {
 
   return (
     <div
-      className={`glass-card flex flex-col p-5 md:p-6 overflow-hidden transition-all duration-500 gap-6 relative group ${totalSpeed > 5 ? 'ring-1 ring-primary/30 shadow-[0_0_30px_rgba(var(--color-primary-rgb),0.1)]' : 'ring-1 ring-white/5'
+      className={`disk-card flex flex-col p-5 md:p-6 overflow-hidden transition-all duration-500 gap-6 relative group ${totalSpeed > 5 ? 'ring-1 ring-primary/30 shadow-[0_0_30px_rgba(var(--color-primary-rgb),0.1)]' : 'ring-1 ring-white/5'
         } ${data.stale ? 'opacity-70 grayscale-[50%]' : ''}`}
     >
       {/* ── TOP: Header Section ── */}
@@ -241,30 +241,26 @@ export const DiskCard: React.FC<DiskCardProps> = React.memo(({ data }) => {
         {/* Graph */}
         <div className="h-24 w-full relative -mx-1">
           <div className={`absolute inset-0 transition-all duration-1000 ${isDiskIdle ? 'opacity-30 grayscale' : 'opacity-100'}`}>
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
               <AreaChart data={renderHistory} margin={{ top: 5, right: 5, left: 5, bottom: 0 }}>
-                <defs>
-                  <linearGradient id={`gradient-${data.id}`} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="var(--color-primary)" stopOpacity={0.4} />
-                    <stop offset="100%" stopColor="var(--color-primary)" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} opacity={0.4} />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} opacity={0.2} />
                 <YAxis 
                   orientation="right" 
-                  domain={[0, (dataMax: number) => Math.max(dataMax, 5)]} 
-                  tick={{ fontSize: 10, fill: 'var(--color-muted)' }} 
+                  domain={[0, 100]} 
+                  ticks={[0, 10, 30, 50, 70, 100]}
+                  tick={{ fontSize: 9, fontWeight: 'bold', fill: 'var(--color-muted)', opacity: 0.5 }} 
                   tickLine={false} 
                   axisLine={false} 
-                  tickFormatter={(val) => `${val} MB/s`}
-                  width={60}
+                  tickFormatter={(val) => val === 0 ? '' : `${val}`}
+                  width={30}
                 />
                 <Area
                   type="monotone"
                   dataKey="renderVal"
                   stroke="var(--color-primary)"
-                  strokeWidth={2.5}
-                  fill={`url(#gradient-${data.id})`}
+                  strokeWidth={1.5}
+                  fill="var(--color-primary)"
+                  fillOpacity={0.05}
                   isAnimationActive={false}
                 />
               </AreaChart>

@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { Search, Square, AlertTriangle, CheckCircle2, Terminal, Shield, ChevronDown, Wrench } from 'lucide-react'
 
 
+import logo from '../assets/logo.png'
+
 interface DriveScannerProps {
   drives: string[]
 }
@@ -256,13 +258,13 @@ export const DriveScanner: React.FC<DriveScannerProps> = React.memo(({ drives })
 
       {/* Empty State */}
       {!isScanning && !scanComplete && logLines.length === 0 && (
-        <div className="glass-card p-12 flex flex-col items-center justify-center text-center min-h-[300px]">
-
-          <div className="p-6 rounded-full bg-surface border border-border mb-6 shadow-xl">
-            <Shield className="w-16 h-16 text-muted/50" />
+        <div className="glass-card p-12 flex flex-col items-center justify-center text-center min-h-[400px] relative overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-b from-primary/5 to-transparent pointer-events-none" />
+          <div className="p-8 rounded-3xl bg-white border border-border mb-8 shadow-2xl relative z-10">
+            <img src={logo} alt="DriveWatch" className="w-24 h-24 object-contain" />
           </div>
 
-          <h3 className="text-[20px] font-bold text-foreground/70 mb-2">System Ready for Scan</h3>
+          <h3 className="text-[24px] font-black text-foreground mb-3 relative z-10 tracking-tight">System Ready for Scan</h3>
           <p className="text-[14px] text-muted max-w-sm">
             Select a drive and start the scanner to verify data integrity and check for bad sectors.
           </p>
