@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Shield, Thermometer, HardDrive, AlertTriangle, CheckCircle2,
   Clock, Zap, ChevronDown, ChevronUp, RefreshCw, Terminal,
-  Activity, AlertCircle, Info
+  Activity, AlertCircle, Info, Hexagon
 } from 'lucide-react'
 import logo from '../assets/logo.png'
 
@@ -98,9 +98,9 @@ function scoreColor(score: number): string {
 
 function scoreBgClass(status: string): string {
   if (status === 'PASSED') return 'bg-success/10 border-success/30 text-success'
-  if (status === 'WARNING') return 'bg-warning/10 border-warning/30 text-warning'
-  if (status === 'UNKNOWN') return 'bg-surface border-border text-muted'
-  return 'bg-accent/10 border-accent/30 text-accent'
+  if (status === 'WARNING') return 'bg-warning/10 border-warning/50 text-warning shadow-[0_0_15px_rgba(245,158,11,0.15)]'
+  if (status === 'UNKNOWN') return 'bg-surface/30 border-white/5 text-muted'
+  return 'bg-accent/10 border-accent/50 text-accent shadow-[0_0_15px_rgba(236,72,153,0.15)]'
 }
 
 // ── Arc SVG for health score ──────────────────────────────────────────────────
@@ -161,15 +161,16 @@ const MetricCard: React.FC<{
   sub?: React.ReactNode
   accent?: string
 }> = ({ icon, label, value, sub, accent = 'primary' }) => (
-  <div className="glass-card p-5 flex flex-col gap-3">
-    <div className="flex items-center gap-2">
-      <div className={`p-2 rounded-xl bg-${accent}/10 text-${accent} border border-${accent}/20`}>
+  <div className={`glass-card p-5 flex flex-col gap-3 relative overflow-hidden group transition-all duration-200 border-white/5 hover:border-${accent}/30 hover:-translate-y-[2px] active:scale-[0.98]`}>
+    <div className={`absolute inset-0 bg-${accent}/5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none`} />
+    <div className="flex items-center gap-2 relative z-10">
+      <div className={`p-2 rounded-xl bg-${accent}/10 text-${accent} border border-${accent}/20 transition-all duration-200 group-hover:shadow-[0_0_15px_var(--color-${accent})] group-hover:drop-shadow-md`}>
         {icon}
       </div>
       <span className="text-[11px] font-extrabold uppercase tracking-widest text-muted">{label}</span>
     </div>
-    <div className="text-[22px] font-black text-foreground leading-none">{value}</div>
-    {sub && <div className="text-[11px] text-muted">{sub}</div>}
+    <div className={`text-[24px] font-black text-foreground leading-none relative z-10 tracking-tight`}>{value}</div>
+    {sub && <div className="text-[11px] text-muted relative z-10">{sub}</div>}
   </div>
 )
 
@@ -181,14 +182,24 @@ const DriveCard: React.FC<{
   scanning: boolean
   score: HealthScore | null
   onClick: () => void
-}> = ({ drive, selected, scanning, score, onClick }) => (
+}> = ({ drive, selected, scanning, score, onClick }) => {
+  const glowBorder = score?.status === 'PASSED' ? 'hover:border-success/50' 
+                   : score?.status === 'WARNING' ? 'hover:border-warning/50'
+                   : score?.status === 'FAILED' ? 'hover:border-accent/50'
+                   : 'hover:border-primary/50'
+  const activeGlow = score?.status === 'PASSED' ? 'border-success/30 bg-success/5 shadow-[0_0_15px_rgba(16,185,129,0.05)]'
+                   : score?.status === 'WARNING' ? 'border-warning/40 shadow-[0_0_20px_rgba(245,158,11,0.15)] bg-warning/5'
+                   : score?.status === 'FAILED' ? 'border-accent/40 shadow-[0_0_20px_rgba(236,72,153,0.15)] bg-accent/5'
+                   : 'border-primary/30 shadow-[0_0_15px_rgba(6,182,212,0.05)] bg-primary/5'
+
+  return (
   <button
     onClick={onClick}
-    className={`w-full text-left p-5 rounded-2xl border transition-all duration-200 cursor-pointer ${
+    className={`w-full text-left p-5 rounded-2xl border transition-all duration-200 cursor-pointer glass-card hover:-translate-y-[2px] active:scale-[0.98] ${
       selected
-        ? 'border-primary bg-primary/5 shadow-[0_0_20px_rgba(var(--color-primary-rgb),0.15)]'
-        : 'border-border bg-card-solid hover:border-primary/50 hover:bg-surface/30'
-    } ${scanning ? 'animate-pulse border-primary/50' : ''}`}
+        ? activeGlow
+        : `border-transparent bg-transparent ${glowBorder} hover:bg-surface/30 hover:shadow-[0_0_15px_rgba(255,255,255,0.05)]`
+    } ${scanning ? 'animate-pulse opacity-80 scale-95' : ''}`}
   >
     <div className="flex items-start justify-between gap-3">
       <div className="flex items-center gap-3">
@@ -222,7 +233,8 @@ const DriveCard: React.FC<{
       </div>
     )}
   </button>
-)
+  )
+}
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
@@ -380,9 +392,39 @@ export const DriveHealthScanner: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center py-24 gap-6 animate-fade-in">
-        <div className="w-16 h-16 rounded-full border-4 border-primary/20 border-t-primary animate-spin" />
-        <p className="text-[14px] font-bold text-muted uppercase tracking-widest">Loading diagnostic modules...</p>
+      <div className="animate-fade-in flex flex-col gap-10">
+        <div>
+          <div className="w-40 h-5 bg-white/[0.03] rounded-md animate-pulse mb-6 border border-transparent" style={{ animationDuration: '3s' }} />
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {[1, 2, 3, 4].map((i, index) => (
+              <div key={i} className="w-full p-5 rounded-2xl border border-transparent bg-white/[0.01] animate-pulse h-[90px] flex items-center gap-4" style={{ animationDuration: '3s', animationDelay: `${index * 0.1}s` }}>
+                <div className="w-10 h-10 rounded-xl bg-white/[0.03] shrink-0" />
+                <div className="flex-1 space-y-2">
+                  <div className="w-24 h-4 bg-white/[0.03] rounded" />
+                  <div className="w-16 h-3 bg-white/[0.02] rounded" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="glass-card p-8 min-h-[400px] animate-pulse flex flex-col gap-8 border-transparent bg-white/[0.01]" style={{ animationDuration: '3s', animationDelay: '0.4s' }}>
+          <div className="flex justify-between items-center">
+            <div className="space-y-3">
+              <div className="w-64 h-8 bg-white/[0.03] rounded-lg" />
+              <div className="w-48 h-4 bg-white/[0.02] rounded" />
+            </div>
+            <div className="w-32 h-12 bg-white/[0.03] rounded-xl" />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 flex-1">
+             <div className="h-full bg-white/[0.02] rounded-2xl border border-transparent" />
+             <div className="md:col-span-2 grid grid-cols-2 gap-6">
+                <div className="h-32 bg-white/[0.02] rounded-2xl border border-transparent" />
+                <div className="h-32 bg-white/[0.02] rounded-2xl border border-transparent" />
+                <div className="h-32 bg-white/[0.02] rounded-2xl border border-transparent" />
+                <div className="h-32 bg-white/[0.02] rounded-2xl border border-transparent" />
+             </div>
+          </div>
+        </div>
       </div>
     )
   }

@@ -25,6 +25,8 @@ export const StorageExplorer: React.FC<StorageExplorerProps> = ({ disks }) => {
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set())
   const [isLoading, setIsLoading] = useState(false)
   const [isScanning, setIsScanning] = useState(false)
+  const [isDone, setIsDone] = useState(false)
+  const [scanProgress, setScanProgress] = useState({ total: 0, processed: 0 })
   const [searchQuery, setSearchQuery] = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
 
@@ -120,7 +122,12 @@ export const StorageExplorer: React.FC<StorageExplorerProps> = ({ disks }) => {
 
   // Listen for background scan updates
   useEffect(() => {
-    const cleanup = window.api.storage.onProgress((node) => {
+    const cleanup = window.api.storage.onProgress((node: any) => {
+      // Update progress if stats are available
+      if (node.totalItems !== undefined) {
+        setScanProgress({ total: node.totalItems, processed: node.processedItems || 0 })
+      }
+
       // Update tree nodes recursively
       setTreeNodes(prev => {
         const updateNode = (nodes: StorageNode[]): StorageNode[] => {
@@ -161,6 +168,9 @@ export const StorageExplorer: React.FC<StorageExplorerProps> = ({ disks }) => {
 
     const cleanupDone = window.api.storage.onDone(() => {
       setIsScanning(false)
+      setIsDone(true)
+      setScanProgress({ total: 0, processed: 0 })
+      setTimeout(() => setIsDone(false), 3000)
     })
 
     return () => {
@@ -172,11 +182,13 @@ export const StorageExplorer: React.FC<StorageExplorerProps> = ({ disks }) => {
   const handleNavigate = (path: string) => {
     setCurrentPath(path)
     setSelectedPaths(new Set())
+    setScanProgress({ total: 0, processed: 0 })
   }
 
   const handleScan = () => {
     if (!currentPath) return
     setIsScanning(true)
+    setScanProgress({ total: 0, processed: 0 })
     window.api.storage.scan(currentPath)
   }
 
@@ -234,6 +246,26 @@ export const StorageExplorer: React.FC<StorageExplorerProps> = ({ disks }) => {
                   </React.Fragment>
                 ))}
              </div>
+             
+             {/* Progress Bar */}
+             {isScanning && scanProgress.total > 0 && (
+               <div className="mt-2 flex flex-col gap-1.5 animate-in fade-in slide-in-from-top-1 duration-500">
+                 <div className="flex items-center justify-between">
+                   <span className="text-[9px] font-black text-primary uppercase tracking-[0.1em] animate-pulse">
+                     Analyzing Structure... {Math.round((scanProgress.processed / scanProgress.total) * 100)}%
+                   </span>
+                   <span className="text-[9px] font-bold text-muted/60">
+                     {scanProgress.processed} / {scanProgress.total} Folders
+                   </span>
+                 </div>
+                 <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
+                   <div 
+                     className="h-full bg-primary shadow-[0_0_10px_rgba(6,182,212,0.5)] transition-all duration-300"
+                     style={{ width: `${(scanProgress.processed / scanProgress.total) * 100}%` }}
+                   />
+                 </div>
+               </div>
+             )}
           </div>
         </div>
 
@@ -259,11 +291,27 @@ export const StorageExplorer: React.FC<StorageExplorerProps> = ({ disks }) => {
               className={`flex items-center gap-2 px-5 h-full rounded-2xl text-xs font-black uppercase tracking-widest transition-all ${
                 isScanning 
                   ? 'bg-primary/20 text-primary border border-primary/30 animate-pulse' 
-                  : 'bg-primary text-white hover:shadow-xl hover:shadow-primary/20 active:scale-95'
+                  : isDone
+                    ? 'bg-success/20 text-success border border-success/30 shadow-[0_0_15px_rgba(34,197,94,0.2)]'
+                    : 'bg-primary text-white hover:shadow-xl hover:shadow-primary/20 active:scale-95'
               }`}
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin' : ''}`} />
-              {isScanning ? 'Analyzing' : 'Deep Scan'}
+              {isScanning ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  Analyzing
+                </>
+              ) : isDone ? (
+                <div className="flex items-center gap-2 animate-in zoom-in-95 duration-300">
+                  <HardDrive className="w-3.5 h-3.5" />
+                  Done
+                </div>
+              ) : (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Deep Scan
+                </>
+              )}
             </button>
 
             <button 

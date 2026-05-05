@@ -12,11 +12,20 @@ export interface StorageNode {
   isJunk?: boolean
   fileCount?: number
   children?: StorageNode[]
+  suggestions?: {
+    largeUnused: any[]
+    junkFiles: any[]
+  }
 }
 
 export class StorageScanner extends EventEmitter {
   private worker: Worker | null = null
   private nodes: Map<string, StorageNode> = new Map()
+  private _currentScanPath: string | null = null
+
+  public get currentScanPath(): string | null {
+    return this._currentScanPath
+  }
 
   constructor() {
     super()
@@ -68,6 +77,7 @@ export class StorageScanner extends EventEmitter {
    * Deep background scan for total folder sizes
    */
   public scanFolder(dirPath: string) {
+    this._currentScanPath = dirPath
     if (this.worker) {
       this.worker.terminate()
     }
@@ -98,8 +108,10 @@ export class StorageScanner extends EventEmitter {
             path: msg.path,
             size: msg.size,
             fileCount: msg.fileCount,
+            lastModified: msg.lastModified,
             type: 'directory',
-            children: msg.files
+            children: msg.files,
+            suggestions: msg.suggestions
           }
           this.nodes.set(msg.path, node)
           this.emit('progress', node)
@@ -118,10 +130,12 @@ export class StorageScanner extends EventEmitter {
       this.worker.on('exit', (code) => {
         if (code !== 0) console.error(`[StorageWorker] Stopped with exit code ${code}`)
         this.worker = null
+        this._currentScanPath = null
       })
     } catch (err) {
       console.error('[StorageScanner] Failed to start worker:', err)
       this.emit('error', err)
+      this._currentScanPath = null
     }
   }
 
@@ -130,6 +144,7 @@ export class StorageScanner extends EventEmitter {
       this.worker.terminate()
       this.worker = null
     }
+    this._currentScanPath = null
   }
 
   /**
@@ -140,7 +155,7 @@ export class StorageScanner extends EventEmitter {
     const junkFiles: StorageNode[] = []
     
     const now = Date.now()
-    const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000
+    const oneDayMs = 24 * 60 * 60 * 1000
 
     const normalizedFilter = filterPath ? (filterPath.length === 2 && filterPath[1] === ':') ? filterPath + '\\' : filterPath : null
 
@@ -150,11 +165,18 @@ export class StorageScanner extends EventEmitter {
         continue
       }
 
+      // Use suggestions directly from worker if available
+      if ((node as any).suggestions) {
+        const sugg = (node as any).suggestions
+        if (sugg.largeUnused) largeUnused.push(...sugg.largeUnused)
+        if (sugg.junkFiles) junkFiles.push(...sugg.junkFiles)
+      }
+
       if (node.children) {
         for (const child of node.children) {
           if (child.type === 'file') {
-            // Old Large Files (> 500MB, > 90 days)
-            if (child.size > 500 * 1024 * 1024 && child.lastModified && (now - child.lastModified) > ninetyDaysMs) {
+            // Old Large Files (> 10MB, > 1 day)
+            if (child.size > 10 * 1024 * 1024 && child.lastModified && (now - child.lastModified) > oneDayMs) {
               largeUnused.push(child)
             }
             // Junk Files

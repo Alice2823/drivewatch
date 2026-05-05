@@ -21,10 +21,10 @@ export class PowerShellHost {
   }
 
   public static getInstance(name: string = 'default'): PowerShellHost {
-    if (!PowerShellHost.instances.has(name)) {
-      PowerShellHost.instances.set(name, new PowerShellHost())
+    if (!PowerShellHost.instance) {
+      PowerShellHost.instance = new PowerShellHost()
     }
-    return PowerShellHost.instances.get(name)!
+    return PowerShellHost.instance
   }
 
   private startProcess() {

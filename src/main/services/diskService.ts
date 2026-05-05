@@ -12,9 +12,9 @@ export interface DiskData {
   used: number
   free: number
   temperature: number | null
-  health: 'Good' | 'Warning' | 'Critical' | 'Unknown'
   readSpeed: number
   writeSpeed: number
+  usagePercent?: number
   serial?: string
   vendor?: string
   firmware?: string
@@ -35,6 +35,7 @@ function log(msg: string): void {
 if (!fs.existsSync(logPath)) fs.writeFileSync(logPath, '--- DriveWatch Logs ---\n')
 
 import { PowerShellHost } from './psHost'
+import { getThermalData } from './thermalService'
 
 const psHost = PowerShellHost.getInstance()
 
@@ -45,18 +46,41 @@ async function runPS(scriptName: string, scriptBody: string, timeoutMs = 6000): 
 
 
 // ── Typeperf Real-time IO Stream ─────────────────────────────────────────────
+// Runs as its OWN dedicated child process — never competes with psHost queue.
 // liveIO key = disk index as string ("0", "1", …)
-let liveIO: Record<string, { r: number; w: number }> = {}
+let liveIO: Record<string, { r: number; w: number; usage: number }> = {}
 let typeperfProcess: ChildProcessWithoutNullStreams | null = null
 let typeperfHeaders: string[] = []
+let isMonitoringEnabled = true
+let monitoringRestartTimeout: NodeJS.Timeout | null = null
+
+export function stopMonitoring(): void {
+  log('[DiskService] Stopping all internal monitoring processes')
+  isMonitoringEnabled = false
+  if (monitoringRestartTimeout) {
+    clearTimeout(monitoringRestartTimeout)
+    monitoringRestartTimeout = null
+  }
+  if (typeperfProcess) {
+    typeperfProcess.kill()
+    typeperfProcess = null
+  }
+}
+
+export function resumeMonitoring(): void {
+  log('[DiskService] Resuming internal monitoring')
+  isMonitoringEnabled = true
+  startTypeperfStream()
+}
 
 function startTypeperfStream(): void {
-  if (typeperfProcess) return
-  log('[Typeperf] Starting stream...')
+  if (typeperfProcess || !isMonitoringEnabled) return
+  log('[Typeperf] Starting stream with Read/Write/DiskTime...')
 
   typeperfProcess = spawn('typeperf', [
     '\\PhysicalDisk(*)\\Disk Read Bytes/sec',
     '\\PhysicalDisk(*)\\Disk Write Bytes/sec',
+    '\\PhysicalDisk(*)\\% Disk Time',
     '-si', '1'
   ], { windowsHide: true })
 
@@ -71,9 +95,10 @@ function startTypeperfStream(): void {
       const line = rawLine.trim()
       if (!line) continue
 
-      // Header line — looks like: "(PDH-CSV 4.0)","\\.\PhysicalDisk(0 C:)\Disk Read Bytes/sec", ...
+      // Header line
       if (line.includes('PhysicalDisk')) {
         typeperfHeaders = line.split(',').map((h) => h.replace(/"/g, '').trim())
+        log(`[Typeperf] Headers: ${typeperfHeaders.length} columns detected`)
         continue
       }
 
@@ -83,27 +108,35 @@ function startTypeperfStream(): void {
       const parts = line.split(',').map((p) => p.replace(/"/g, '').trim())
       if (parts.length < 2) continue
 
+      // Debug: log raw data line
+      log(`[Typeperf] Data: parts=${parts.length}, first=${parts[0]}, liveIO keys=${Object.keys(liveIO).join(',')}`)
+
       for (let i = 1; i < parts.length; i++) {
         const header = typeperfHeaders[i]
         if (!header) continue
 
-        // Extract disk index from e.g. "PhysicalDisk(0 C:)" or "PhysicalDisk(0)" or "_Total"
+        // Extract disk index — skip _Total
         const match = header.match(/PhysicalDisk\((\d+)[^)]*\)/)
-        if (!match) continue // skip _Total
+        if (!match) continue
 
-        const diskIdx = match[1] // "0", "1", etc.
-        if (!liveIO[diskIdx]) liveIO[diskIdx] = { r: 0, w: 0 }
+        const diskIdx = match[1]
+        if (!liveIO[diskIdx]) liveIO[diskIdx] = { r: 0, w: 0, usage: 0 }
 
-        const bytes = parseFloat(parts[i]) || 0
-        const mb = bytes / 1_048_576
+        const val = parseFloat(parts[i]) || 0
 
         if (header.includes('Read')) {
-          liveIO[diskIdx].r = mb
-        } else {
-          liveIO[diskIdx].w = mb
+          liveIO[diskIdx].r = val / 1_048_576
+        } else if (header.includes('Write')) {
+          liveIO[diskIdx].w = val / 1_048_576
+        } else if (header.includes('Disk Time') || header.includes('% Disk')) {
+          liveIO[diskIdx].usage = Math.min(100, Math.max(0, val))
         }
       }
     }
+  })
+
+  typeperfProcess.stderr.on('data', (chunk: Buffer) => {
+    log(`[Typeperf] stderr: ${chunk.toString().trim()}`)
   })
 
   typeperfProcess.on('error', (err) => {
@@ -111,10 +144,12 @@ function startTypeperfStream(): void {
     typeperfProcess = null
   })
 
-  typeperfProcess.on('exit', () => {
-    log('[Typeperf] Exited. Restarting in 5s...')
+  typeperfProcess.on('exit', (code) => {
+    log(`[Typeperf] Exited with code ${code}.`)
     typeperfProcess = null
-    setTimeout(startTypeperfStream, 5000)
+    if (isMonitoringEnabled) {
+      monitoringRestartTimeout = setTimeout(startTypeperfStream, 3000)
+    }
   })
 }
 
@@ -131,55 +166,48 @@ interface PhysicalDisk {
   health: string      // Healthy / Warning / Unhealthy
 }
 
-async function getPhysicalDisks(): Promise<PhysicalDisk[]> {
-  const script = `
-try {
-  $disks = Get-PhysicalDisk | Select-Object DeviceId, FriendlyName, Size, MediaType, BusType, SerialNumber, HealthStatus
-  $disks | ConvertTo-Json -Compress -Depth 2
-} catch {
-  Write-Output '[]'
-}
-`
-  const out = await runPS('get_physical_disks', script, 20000)
-  if (!out) return []
+let cachedPhysical: PhysicalDisk[] = []
+let cachedVolumes: any[] = []
+let cachedResult: DiskData[] = []
+let lastHeavy = 0
+let isFetchingHeavy = false
+let lastDiskCount = -1
+const HEAVY_INTERVAL = 30_000
 
+async function getFastDiskCount(): Promise<number> {
   try {
-    let parsed = JSON.parse(out)
-    if (!Array.isArray(parsed)) parsed = [parsed]
-    return parsed.map((d: any) => ({
-      index: parseInt(d.DeviceId ?? '0'),
-      name: (d.FriendlyName || 'Unknown Disk').trim(),
-      size: Number(d.Size) || 0,
-      mediaType: d.MediaType || 'Unspecified',
-      busType: d.BusType || 'Unknown',
-      serialNum: (d.SerialNumber || '').trim(),
-      health: d.HealthStatus || 'Unknown'
-    })).sort((a: PhysicalDisk, b: PhysicalDisk) => a.index - b.index)
-  } catch (e: any) {
-    log(`[DiskService] PhysicalDisk parse error: ${e.message}`)
-    return []
-  }
+    const out = await runPS('fast_count', 'Get-CimInstance Win32_DiskDrive | Measure-Object | Select-Object -ExpandProperty Count', 2000)
+    return parseInt(out) || 0
+  } catch { return -1 }
 }
 
-// ── Partition → Volume mapping ────────────────────────────────────────────────
-interface VolumeInfo {
-  diskIndex: number
-  driveLetter: string  // "C", "D", etc.
-  size: number
-  free: number
-}
-
-async function getVolumeMap(): Promise<VolumeInfo[]> {
+async function refreshDiskInventory(): Promise<void> {
   const script = `
 try {
-  $partitions = Get-Partition | Where-Object { $_.DriveLetter -and $_.DriveLetter -ne [char]0 }
-  $volumes = Get-Volume | Where-Object { $_.DriveLetter -and $_.DriveLetter -ne [char]0 }
+  $disks = Get-CimInstance Win32_DiskDrive -ErrorAction SilentlyContinue | Select-Object Index, Caption, Size, InterfaceType, SerialNumber, Status
+  $physDisks = Get-PhysicalDisk -ErrorAction SilentlyContinue | Select-Object DeviceId, MediaType, BusType
+  $partitions = Get-Partition -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -and $_.DriveLetter -ne [char]0 }
+  $volumes = Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -and $_.DriveLetter -ne [char]0 }
 
-  $result = @()
+  $physOutput = @()
+  foreach ($d in $disks) {
+    $p = $physDisks | Where-Object { $_.DeviceId -eq $d.Index }
+    $physOutput += @{
+      index = $d.Index
+      name = $d.Caption
+      size = $d.Size
+      mediaType = if ($p) { $p.MediaType } else { "Unspecified" }
+      busType = if ($p) { $p.BusType } else { $d.InterfaceType }
+      serialNum = $d.SerialNumber
+      health = $d.Status
+    }
+  }
+
+  $volOutput = @()
   foreach ($p in $partitions) {
     $vol = $volumes | Where-Object { $_.DriveLetter -eq $p.DriveLetter } | Select-Object -First 1
     if ($vol) {
-      $result += [PSCustomObject]@{
+      $volOutput += @{
         DiskNumber  = $p.DiskNumber
         DriveLetter = "$($p.DriveLetter):"
         Size        = $vol.Size
@@ -187,33 +215,45 @@ try {
       }
     }
   }
-  $result | ConvertTo-Json -Compress -Depth 2
+
+  @{ phys = $physOutput; vols = $volOutput } | ConvertTo-Json -Compress -Depth 3
 } catch {
-  Write-Output '[]'
+  Write-Output '{"phys":[], "vols":[]}'
 }
 `
-  const out = await runPS('get_volume_map', script, 20000)
-  if (!out || out === '[]') return []
+  const out = await runPS('refresh_inventory', script, 25000)
+  if (!out) return
 
   try {
-    let parsed = JSON.parse(out)
-    if (!Array.isArray(parsed)) parsed = [parsed]
-    return parsed.map((v: any) => ({
-      diskIndex: parseInt(v.DiskNumber ?? '0'),
-      driveLetter: v.DriveLetter || '',
-      size: Number(v.Size) || 0,
-      free: Number(v.Free) || 0
-    })).filter((v: VolumeInfo) => v.driveLetter)
+    const parsed = JSON.parse(out)
+    if (parsed.phys) {
+      cachedPhysical = (Array.isArray(parsed.phys) ? parsed.phys : [parsed.phys]).map((d: any) => ({
+        index: Number(d.index),
+        name: (d.name || 'Unknown Disk').trim(),
+        size: Number(d.size) || 0,
+        mediaType: d.mediaType || 'Unspecified',
+        busType: d.busType || 'Unknown',
+        serialNum: (d.serialNum || '').trim(),
+        health: d.health || 'Unknown'
+      })).sort((a: any, b: any) => a.index - b.index)
+    }
+    if (parsed.vols) {
+      cachedVolumes = (Array.isArray(parsed.vols) ? parsed.vols : [parsed.vols]).map((v: any) => ({
+        diskIndex: parseInt(v.DiskNumber ?? '0'),
+        driveLetter: v.DriveLetter || '',
+        size: Number(v.Size) || 0,
+        free: Number(v.Free) || 0
+      })).filter((v: any) => v.driveLetter)
+    }
   } catch (e: any) {
-    log(`[DiskService] VolumeMap parse error: ${e.message}`)
-    return []
+    log(`[DiskService] Inventory parse error: ${e.message}`)
   }
 }
 
 // ── Temperature via SMART/WMI ─────────────────────────────────────────────────
 let cachedTemps: Record<number, number> = {}
 let lastTempFetch = 0
-const TEMP_INTERVAL = 5_000
+const TEMP_INTERVAL = 2_000
 
 async function refreshTemperatures(): Promise<void> {
   const now = Date.now()
@@ -278,62 +318,44 @@ if ($result.Count -gt 0) { $result | ConvertTo-Json -Compress } else { '{}' }
   } catch { /* parse failure = no temp update */ }
 }
 
-// ── Cache ─────────────────────────────────────────────────────────────────────
-let cachedPhysical: PhysicalDisk[] = []
-let cachedVolumes: VolumeInfo[] = []
-let cachedResult: DiskData[] = []
-let lastHeavy = 0
-const HEAVY_INTERVAL = 30_000  // re-enumerate every 30s; IO comes from typeperf every 1s
+// ── Background Polling ───────────────────────────────────────────────────────
+async function runDiskBackgroundLoop() {
+  if (!isMonitoringEnabled) {
+    setTimeout(runDiskBackgroundLoop, 1500)
+    return
+  }
 
-let isFetchingHeavy = false
-
-let lastDiskCount = -1
-
-// ── Main Export ───────────────────────────────────────────────────────────────
-export async function getDiskData(): Promise<DiskData[]> {
   const now = Date.now()
-  const needsHeavy = now - lastHeavy > HEAVY_INTERVAL || cachedPhysical.length === 0
+  const currentCount = await getFastDiskCount()
+  const countChanged = lastDiskCount !== -1 && currentCount !== lastDiskCount
+  const needsHeavy = countChanged || now - lastHeavy > HEAVY_INTERVAL || cachedPhysical.length === 0
 
-  if (needsHeavy && !isFetchingHeavy) {
+  if (!isFetchingHeavy) {
     isFetchingHeavy = true
     try {
-      const [phys, vols] = await Promise.all([
-        getPhysicalDisks(),
-        getVolumeMap()
-      ])
-
-      if (phys.length > 0) {
-        if (lastDiskCount !== -1 && lastDiskCount !== phys.length) {
-          log(`[DiskService] Disk count changed (${lastDiskCount} -> ${phys.length}). Restarting typeperf...`)
-          if (typeperfProcess) {
-            typeperfProcess.removeAllListeners('exit')
-            typeperfProcess.kill()
-            typeperfProcess = null
-            startTypeperfStream()
-          }
+      if (needsHeavy) {
+        log(`[DiskService] Refreshing disks (reason: ${countChanged ? 'count changed' : 'interval'})`)
+        await refreshDiskInventory()
+        
+        if (lastDiskCount !== -1 && lastDiskCount !== cachedPhysical.length) {
+          if (typeperfProcess) { typeperfProcess.kill(); typeperfProcess = null; }
+          startTypeperfStream()
         }
-        lastDiskCount = phys.length
-
-        cachedPhysical = phys
-        cachedVolumes = vols
+        lastDiskCount = cachedPhysical.length
         lastHeavy = Date.now()
       }
-    } finally {
-      isFetchingHeavy = false
-    }
-
-    // Temperature: non-blocking background refresh
-    refreshTemperatures().catch(() => {})
-  } else if (!needsHeavy) {
-    // Lightweight: still try temperature refresh (respects cooldown)
-    refreshTemperatures().catch(() => {})
+      await refreshTemperatures().catch(() => {})
+    } finally { isFetchingHeavy = false }
   }
 
-  if (cachedPhysical.length === 0) {
-    log('[DiskService] No physical disks found')
-    return cachedResult.map((d) => ({ ...d, stale: true }))
-  }
+  setTimeout(runDiskBackgroundLoop, 1500)
+}
 
+// Start immediately
+runDiskBackgroundLoop()
+
+// ── Main Export (INSTANT CACHE) ──────────────────────────────────────────────
+export async function getDiskData(): Promise<DiskData[]> {
   const disks: DiskData[] = []
 
   for (const phys of cachedPhysical) {
@@ -350,36 +372,28 @@ export async function getDiskData(): Promise<DiskData[]> {
     const io = liveIO[String(idx)]
     const readSpeed  = io ? Math.max(0, io.r) : 0
     const writeSpeed = io ? Math.max(0, io.w) : 0
+    const usagePercent = io ? Math.min(100, Math.max(0, io.usage)) : 0
 
     // Drive type label
     const bus   = phys.busType.toUpperCase()
     const media = phys.mediaType.toUpperCase()
     const name  = phys.name.toUpperCase()
     let driveType = 'HDD'
-    if (bus === 'NVME' || name.includes('NVME') || name.includes('NVM EXPRESS')) {
-      driveType = 'NVMe'
-    } else if (bus === 'USB') {
-      driveType = 'USB'
-    } else if (media === 'SSD' || name.includes('SSD')) {
-      driveType = 'SATA SSD'
-    } else if (bus === 'SATA') {
-      driveType = 'SATA HDD'
-    }
+    if (bus === 'NVME' || name.includes('NVME') || name.includes('NVM EXPRESS')) driveType = 'NVMe'
+    else if (bus === 'USB') driveType = 'USB'
+    else if (media === 'SSD' || name.includes('SSD')) driveType = 'SATA SSD'
+    else if (bus === 'SATA') driveType = 'SATA HDD'
 
-    // Health
-    const temp = cachedTemps[idx] ?? null
+    // Health (Status only)
     let health: DiskData['health'] = 'Unknown'
     const hs = phys.health.toLowerCase()
-    if (hs.includes('healthy')) health = 'Good'
+    if (hs.includes('healthy') || hs.includes('ok')) health = 'Good'
     else if (hs.includes('warning')) health = 'Warning'
     else if (hs.includes('unhealthy')) health = 'Critical'
-    else health = 'Good' // default to Good if unreported
+    else health = 'Good' 
 
-    // Override with temperature-based warning
-    if (temp !== null) {
-      if (temp > 65) health = 'Critical'
-      else if (temp > 55 && health === 'Good') health = 'Warning'
-    }
+    // Temperature (WMI Fallback)
+    let temp = cachedTemps[idx] ?? null
 
     disks.push({
       id: `disk_${idx}`,
@@ -392,18 +406,17 @@ export async function getDiskData(): Promise<DiskData[]> {
       health,
       readSpeed,
       writeSpeed,
+      usagePercent,
       serial: phys.serialNum || undefined,
       mounts,
       diskIndex: idx,
       isRemovable: bus === 'USB' || bus === 'SD' || bus === 'MMC' || name.includes('USB')
     })
-
   }
 
   if (disks.length > 0) {
     cachedResult = disks
     return disks
   }
-
   return cachedResult.map((d) => ({ ...d, stale: true }))
 }

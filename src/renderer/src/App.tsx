@@ -1,15 +1,16 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import { HardDrive, Activity, ShieldCheck, Zap, Thermometer, Info as InfoIcon, RefreshCcw } from 'lucide-react'
 import { TopBar } from './components/TopBar'
+import { Sidebar } from './components/Sidebar'
 import { DiskCard } from './components/DiskCard'
 import { DriveScanner } from './components/DriveScanner'
 import { DriveHealthScanner } from './components/DriveHealthScanner'
 import { CircularProgress } from './components/CircularProgress'
 
-import logo from './assets/logo.png'
 import { AreaChart, Area, ResponsiveContainer, YAxis, CartesianGrid } from 'recharts'
 import { UpdatePanel } from './components/UpdatePanel'
 import { StorageExplorer } from './components/StorageExplorer/StorageExplorer'
+import { formatBytes } from './utils'
 
 type TabType = 'dashboard' | 'scanner' | 'health' | 'cleanup'
 
@@ -34,7 +35,7 @@ function App(): React.JSX.Element {
   const [globalHistory, setGlobalHistory] = useState<{ val: number }[]>([])
   const [cpuHistory, setCpuHistory] = useState<{ val: number }[]>([])
   const [ramHistory, setRamHistory] = useState<{ val: number }[]>([])
-  const [gpuHistory, setGpuHistory] = useState<{ val: number }[]>([])
+  const [gpuHistories, setGpuHistories] = useState<Record<number, { val: number }[]>>({})
   
   const [systemStats, setSystemStats] = useState<{
     cpuUsage: number;
@@ -69,7 +70,7 @@ function App(): React.JSX.Element {
   const prevGlobalSmoothRef = useRef(0)
   const prevCpuSmoothRef = useRef(0)
   const prevRamSmoothRef = useRef(0)
-  const prevGpuSmoothRef = useRef(0)
+  const prevGpuSmoothRefs = useRef<Record<number, number>>({})
 
   const fetchDisks = useCallback(async () => {
     if (isFetchingRef.current) return
@@ -92,79 +93,68 @@ function App(): React.JSX.Element {
     fetchDisks()
     const intervalId = setInterval(() => {
       if (!document.hidden && !isPaused) fetchDisks()
-    }, 2000)
+    }, 1000)
     return () => clearInterval(intervalId)
   }, [isPaused, fetchDisks])
 
   useEffect(() => {
-    const fetchAllStats = async () => {
+    const fetchTelemetry = async () => {
       if (document.hidden || isFetchingStatsRef.current) return
       isFetchingStatsRef.current = true
+      
       try {
-        const [sysDataFresh, gpuDataRaw] = await Promise.all([
+        const [sys, gpusRaw] = await Promise.all([
           window.api.getSystemStats(),
           window.api.getGpuStats()
         ])
-        
-        const gpusRaw = Array.isArray(gpuDataRaw) ? gpuDataRaw : (gpuDataRaw ? [gpuDataRaw] : [])
-        
-        const gpus = gpusRaw.map(g => ({
-          ...g,
-          temperature: sysDataFresh.hasGpuTemp ? sysDataFresh.gpuTemp : null
-        }))
 
-        setSystemStats(prev => ({
-          ...prev,
-          ...sysDataFresh,
-          gpus: gpus.length > 0 ? gpus : [{ usage: 0, name: "Integrated Graphics", temperature: sysDataFresh.gpuTemp }]
-        }))
+        const gpus = Array.isArray(gpusRaw) ? gpusRaw : (gpusRaw ? [gpusRaw] : [])
+
+        // 🛡️ High-Reactivity Smoothing (0.3 prev / 0.7 current)
+        const alpha = 0.7
+        const smoothVal = (prev: number, curr: number) => prev * (1 - alpha) + curr * alpha
+        
+        prevCpuSmoothRef.current = smoothVal(prevCpuSmoothRef.current, sys.cpuUsage)
+        prevRamSmoothRef.current = smoothVal(prevRamSmoothRef.current, sys.ramUsage)
+
+        setSystemStats({ ...sys, gpus })
         setIsStatsReady(true)
 
-        // Smoothing Logic
+        // Update Histories per sample (Circular Buffer)
         setCpuHistory(prev => {
-          if (prev.length === 0) return Array(60).fill(0).map(() => ({ val: 0 }))
-          const raw = sysDataFresh.cpuUsage
-          let smooth = prevCpuSmoothRef.current
-          if (raw > smooth) smooth = smooth * 0.5 + raw * 0.5
-          else smooth = smooth * 0.7 + raw * 0.3
-          prevCpuSmoothRef.current = smooth
-          return [...prev.slice(-59), { val: smooth }]
+          const h = prev.length === 0 ? Array(60).fill(0).map(() => ({ val: 0 })) : prev
+          return [...h.slice(-59), { val: Math.round(prevCpuSmoothRef.current) }]
         })
 
         setRamHistory(prev => {
-          if (prev.length === 0) return Array(60).fill(0).map(() => ({ val: 0 }))
-          const raw = sysDataFresh.ramUsage || 0
-          let smooth = prevRamSmoothRef.current
-          if (raw > smooth) smooth = smooth * 0.5 + raw * 0.5
-          else smooth = smooth * 0.7 + raw * 0.3
-          prevRamSmoothRef.current = smooth
-          return [...prev.slice(-59), { val: smooth }]
+          const h = prev.length === 0 ? Array(60).fill(0).map(() => ({ val: 0 })) : prev
+          return [...h.slice(-59), { val: Math.round(prevRamSmoothRef.current) }]
         })
 
-        const primaryGpuUsage = gpus[0]?.usage || 0
-        setGpuHistory(prev => {
-          if (prev.length === 0) return Array(60).fill(0).map(() => ({ val: 0 }))
-          const prevSmooth = prevGpuSmoothRef.current
-          const alpha = 0.6
-          const smoothGpu = prevSmooth * (1 - alpha) + primaryGpuUsage * alpha
-          prevGpuSmoothRef.current = smoothGpu
-          return [...prev.slice(-59), { val: Math.round(smoothGpu) }]
+        gpus.forEach((g, idx) => {
+          const usage = g.usage || 0
+          prevGpuSmoothRefs.current[idx] = smoothVal(prevGpuSmoothRefs.current[idx] || 0, usage)
+          setGpuHistories(prev => {
+            const h = prev[idx] || Array(60).fill(0).map(() => ({ val: 0 }))
+            return { ...prev, [idx]: [...h.slice(-59), { val: Math.round(prevGpuSmoothRefs.current[idx]) }] }
+          })
         })
+
       } catch (err) {
-        console.error('[Renderer] Telemetry Sync Error:', err)
+        console.error('[Telemetry] Fetch Error:', err)
       } finally {
         isFetchingStatsRef.current = false
       }
     }
 
-    fetchAllStats()
-    const intervalId = setInterval(fetchAllStats, 1000)
+    const intervalId = setInterval(fetchTelemetry, 500) // 🚀 High-speed 0.5s updates
     return () => clearInterval(intervalId)
-  }, [])
+  }, [disks])
 
   useEffect(() => {
-    const rawTotalIO = disks.reduce((acc: number, d: any) => acc + ((d.readSpeed || 0) + (d.writeSpeed || 0)), 0)
-    const clampedVal = Math.min(Math.max(rawTotalIO, 0), 10000)
+    // Use the max active time % across all disks for the global graph
+    const maxUsage = disks.length === 0 ? 0 : Math.max(...disks.map(d => d.usagePercent || 0))
+    const clampedVal = Math.min(Math.max(maxUsage, 0), 100)
     let smoothVal = clampedVal > prevGlobalSmoothRef.current ? clampedVal : prevGlobalSmoothRef.current * 0.15 + clampedVal * 0.85
     prevGlobalSmoothRef.current = smoothVal
     setGlobalHistory((prev) => {
@@ -183,6 +173,7 @@ function App(): React.JSX.Element {
   }, [disks, systemStats.diskTemp, systemStats.hasDiskTemp])
 
   const currentThroughput = useMemo(() => disks.length === 0 ? 0 : Math.round(disks.reduce((acc, d) => acc + (d.readSpeed + d.writeSpeed), 0)), [disks])
+  const currentUsagePercent = useMemo(() => disks.length === 0 ? 0 : Math.round(Math.max(...disks.map(d => d.usagePercent || 0))), [disks])
   const renderHistory = useMemo(() => globalHistory.map(d => ({ ...d, renderVal: d.val < 0.1 ? 0.05 : d.val })), [globalHistory])
 
   /**
@@ -216,24 +207,29 @@ function App(): React.JSX.Element {
   }
 
   return (
-    <div className="min-h-screen w-full flex flex-col items-center bg-background transition-colors duration-300">
-      <div className="w-full max-w-[1300px] px-4 md:px-8 py-4 md:py-6 pb-20 flex flex-col flex-1 gap-12 md:gap-16">
-        <TopBar lastUpdated={lastUpdated} isPaused={isPaused} onTogglePause={() => setIsPaused(!isPaused)} activeTab={activeTab} setActiveTab={setActiveTab} />
-        
-        <main className="flex-1 flex flex-col gap-12 md:gap-16">
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
-            <div className="flex flex-col">
-              <h2 className="text-[38px] font-black tracking-tight text-foreground leading-tight">
-                {activeTab === 'dashboard' ? 'Dashboard' : 'Drive Scanner'}
-              </h2>
-              <div className="flex flex-wrap items-center gap-3 mt-3">
-                <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-success/10 border border-success/10">
-                  <span className="w-2 h-2 rounded-full bg-success shadow-[0_0_8px_rgba(var(--color-success-rgb),0.5)]" />
-                  <span className="text-xs font-bold text-success uppercase tracking-wider">System Optimal</span>
+    <div className="h-screen w-full flex bg-background overflow-hidden transition-colors duration-300">
+      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
+      <div className="flex-1 flex flex-col h-full overflow-y-auto">
+        <div className="w-full max-w-[1300px] mx-auto px-4 md:px-8 py-4 md:py-6 pb-20 flex flex-col flex-1 gap-8 md:gap-12">
+          <TopBar lastUpdated={lastUpdated} isPaused={isPaused} onTogglePause={() => setIsPaused(!isPaused)} />
+          
+          <main className="flex-1 flex flex-col gap-8 md:gap-12">
+            <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+              <div className="flex flex-col">
+                <h2 className="text-[32px] font-black tracking-tight text-foreground leading-none">
+                  {activeTab === 'dashboard' ? 'Overview' 
+                   : activeTab === 'scanner' ? 'Drive Scanner'
+                   : activeTab === 'health' ? 'Health Analysis'
+                   : 'Storage Explorer'}
+                </h2>
+                <div className="flex flex-wrap items-center gap-3 mt-4">
+                  <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-success/5 border border-success/20">
+                    <span className="w-1.5 h-1.5 rounded-full bg-success" />
+                    <span className="text-[10px] font-black text-success uppercase tracking-widest">Optimal</span>
+                  </div>
+                  {renderStatusBadge()}
                 </div>
-                {renderStatusBadge()}
               </div>
-            </div>
             
             <div className="hidden sm:flex items-center gap-8 border-l border-border/30 pl-8">
               <div className="flex flex-col">
@@ -264,20 +260,34 @@ function App(): React.JSX.Element {
                       <Activity className="w-6 h-6" />
                     </div>
                     <div>
-                      <h4 className="text-[18px] font-semibold text-foreground/90 uppercase">Disk Throughput</h4>
-                      <p className="text-[14px] font-medium text-muted">Aggregate performance</p>
+                      <h4 className="text-[18px] font-semibold text-foreground/90 uppercase tracking-tight">Disk Activity</h4>
+                      <p className="text-[14px] font-medium text-muted">Real-time active time load</p>
                     </div>
                   </div>
-                  <div className="flex items-baseline gap-1.5">
-                    <span className="text-[32px] font-bold text-primary">{currentThroughput}</span>
-                    <span className="text-sm font-bold text-muted">MB/s</span>
+                  <div className="flex items-baseline gap-4">
+                    <div className="flex items-baseline gap-1.5 px-3 py-1 rounded-lg bg-surface/50 border border-white/5">
+                      <span className="text-[20px] font-black text-foreground">{currentUsagePercent}%</span>
+                      <span className="text-[10px] font-bold text-muted uppercase tracking-widest">Active Time</span>
+                    </div>
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-[32px] font-bold text-primary">{currentThroughput}</span>
+                      <span className="text-sm font-bold text-muted">MB/s</span>
+                    </div>
                   </div>
                 </div>
                 <div className="flex-1 min-h-0">
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={renderHistory} margin={{ left: 0, right: -30, top: 0, bottom: 0 }}>
-                      <YAxis orientation="right" domain={[0, 100]} ticks={[0, 10, 30, 50, 70, 100]} tick={{ fontSize: 9, fontWeight: 'bold', fill: 'var(--color-muted)', opacity: 0.5 }} axisLine={false} tickLine={false} />
-                      <Area type="monotone" dataKey="renderVal" stroke="var(--color-primary)" strokeWidth={2} fill="var(--color-primary)" fillOpacity={0.1} isAnimationActive={false} />
+                    <AreaChart data={renderHistory} margin={{ left: 0, right: 40, top: 10, bottom: 0 }}>
+                      <YAxis 
+                        orientation="right" 
+                        domain={[0, 100]} 
+                        ticks={[0, 25, 50, 75, 100]}
+                        tick={{ fontSize: 10, fontWeight: '900', fill: 'rgba(255,255,255,0.7)', dx: 10 }} 
+                        axisLine={false} 
+                        tickLine={false} 
+                        width={50} 
+                      />
+                      <Area type="monotone" dataKey="renderVal" stroke="var(--color-primary)" strokeWidth={2} fill="var(--color-primary)" fillOpacity={0.1} isAnimationActive={true} animationDuration={300} />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
@@ -301,12 +311,14 @@ function App(): React.JSX.Element {
                     <div className="flex flex-col w-40">
                       <div className="flex items-baseline gap-2">
                         <span className="text-[32px] font-black text-foreground">{Math.round(systemStats.cpuUsage)}%</span>
-                        <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-warning/15 border border-warning/30" title={!systemStats.hasCpuTemp ? "Temperature not supported on this processor." : ""}>
-                          <Thermometer className="w-3 h-3 text-warning" />
-                          <span className="text-[12px] font-black text-warning">
-                            {formatTemp(systemStats.cpuTemp, systemStats.hasCpuTemp, isStatsReady)}
-                          </span>
-                        </div>
+                        {systemStats.hasCpuTemp && (
+                          <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-warning/15 border border-warning/30">
+                            <Thermometer className="w-3 h-3 text-warning" />
+                            <span className="text-[12px] font-black text-warning">
+                              {formatTemp(systemStats.cpuTemp, true, isStatsReady)}
+                            </span>
+                          </div>
+                        )}
                       </div>
                       <p className="text-[12px] font-bold text-muted uppercase mt-1">CPU Load</p>
                       <span className="text-[10px] font-semibold text-foreground/80 truncate mt-1">{systemStats.cpuName}</span>
@@ -315,7 +327,23 @@ function App(): React.JSX.Element {
                       <ResponsiveContainer width="100%" height="100%">
                         <AreaChart data={cpuHistory} margin={{ left: 0, right: -30, top: 0, bottom: 0 }}>
                           <YAxis orientation="right" domain={[0, 100]} ticks={[0, 10, 30, 50, 70, 100]} tick={{ fontSize: 9, fontWeight: 'bold', fill: 'var(--color-muted)', opacity: 0.5 }} axisLine={false} tickLine={false} />
-                          <Area type="monotone" dataKey="val" stroke="var(--color-primary)" strokeWidth={2} fill="var(--color-primary)" fillOpacity={0.1} isAnimationActive={false} />
+                          <Area type="monotone" dataKey="val" stroke="var(--color-primary)" strokeWidth={2} fill="var(--color-primary)" fillOpacity={0.1} isAnimationActive={true} animationDuration={300} />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                  {/* RAM Sensor */}
+                  <div className="flex items-center justify-between p-4 rounded-2xl bg-surface/30 border border-white/5 h-[110px]">
+                    <div className="flex flex-col w-40">
+                      <span className="text-[32px] font-black text-foreground">{Math.round(systemStats.ramUsage)}%</span>
+                      <p className="text-[12px] font-bold text-muted uppercase mt-1">RAM Usage</p>
+                      <span className="text-[10px] font-semibold text-foreground/80 mt-1">{formatBytes(systemStats.ramUsedBytes)} / {formatBytes(systemStats.ramTotalBytes)}</span>
+                    </div>
+                    <div className="h-full flex-1">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={ramHistory} margin={{ left: 0, right: -30, top: 0, bottom: 0 }}>
+                          <YAxis orientation="right" domain={[0, 100]} ticks={[0, 10, 30, 50, 70, 100]} tick={{ fontSize: 9, fontWeight: 'bold', fill: 'var(--color-muted)', opacity: 0.5 }} axisLine={false} tickLine={false} />
+                          <Area type="monotone" dataKey="val" stroke="var(--color-primary)" strokeWidth={2} fill="var(--color-primary)" fillOpacity={0.1} isAnimationActive={true} animationDuration={300} />
                         </AreaChart>
                       </ResponsiveContainer>
                     </div>
@@ -327,21 +355,23 @@ function App(): React.JSX.Element {
                       <div className="flex flex-col w-40">
                         <div className="flex items-baseline gap-2">
                           <span className="text-[32px] font-black text-foreground">{Math.round(gpu.usage)}%</span>
-                          <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/15 border border-primary/30" title={!systemStats.hasGpuTemp ? "Temperature not supported on this graphics unit." : ""}>
-                            <Thermometer className="w-3 h-3 text-primary" />
-                            <span className="text-[12px] font-black text-primary">
-                              {formatTemp(gpu.temperature, systemStats.hasGpuTemp, isStatsReady)}
-                            </span>
-                          </div>
+                          {systemStats.hasGpuTemp && (
+                            <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/15 border border-primary/30">
+                              <Thermometer className="w-3 h-3 text-primary" />
+                              <span className="text-[12px] font-black text-primary">
+                                {formatTemp(gpu.temperature, true, isStatsReady)}
+                              </span>
+                            </div>
+                          )}
                         </div>
                         <p className="text-[12px] font-bold text-muted uppercase mt-1">GPU Load</p>
                         <span className="text-[10px] font-semibold text-foreground/80 truncate mt-1">{gpu.name}</span>
                       </div>
                       <div className="h-full flex-1">
                         <ResponsiveContainer width="100%" height="100%">
-                          <AreaChart data={idx === 0 ? gpuHistory : []} margin={{ left: 0, right: -30, top: 0, bottom: 0 }}>
+                          <AreaChart data={gpuHistories[idx] || []} margin={{ left: 0, right: -30, top: 0, bottom: 0 }}>
                             <YAxis orientation="right" domain={[0, 100]} ticks={[0, 10, 30, 50, 70, 100]} tick={{ fontSize: 9, fontWeight: 'bold', fill: 'var(--color-muted)', opacity: 0.5 }} axisLine={false} tickLine={false} />
-                            <Area type="monotone" dataKey="val" stroke="var(--color-primary)" strokeWidth={2} fill="var(--color-primary)" fillOpacity={0.1} isAnimationActive={false} />
+                            <Area type="monotone" dataKey="val" stroke="var(--color-primary)" strokeWidth={2} fill="var(--color-primary)" fillOpacity={0.1} isAnimationActive={true} animationDuration={300} />
                           </AreaChart>
                         </ResponsiveContainer>
                       </div>
@@ -350,16 +380,34 @@ function App(): React.JSX.Element {
                 </div>
               </div>
 
-              {/* Disk Units */}
-              <div className="lg:col-span-3 mt-12">
-                <div className="flex items-center justify-between mb-8">
-                  <h4 className="text-[18px] font-semibold text-foreground/90 uppercase">Active Storage Units</h4>
-                  <div className="h-[1px] flex-1 mx-6 bg-border/30" />
+              <div className="lg:col-span-3 mt-8">
+                <div className="flex items-center justify-between mb-6">
+                  <h4 className="text-[14px] font-black text-muted uppercase tracking-[0.2em]">Active Storage Units</h4>
+                  <div className="h-[1px] flex-1 ml-6 bg-white/5" />
                 </div>
                 {loading ? (
-                  <div className="flex flex-col items-center justify-center py-24 gap-6 glass-card">
-                    <div className="w-16 h-16 rounded-full border-4 border-primary/20 border-t-primary animate-spin" />
-                    <p className="text-[14px] font-bold text-muted uppercase">Scanning devices...</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {[1, 2, 3].map((i) => (
+                      <div key={i} className="glass-card p-6 h-[240px] flex flex-col gap-5 animate-pulse border-white/5 bg-white/[0.02]">
+                        <div className="flex justify-between items-start">
+                          <div className="w-12 h-12 rounded-2xl bg-white/10" />
+                          <div className="w-20 h-6 rounded-full bg-white/5 border border-white/5" />
+                        </div>
+                        <div className="space-y-3">
+                          <div className="w-2/3 h-6 rounded-md bg-white/10" />
+                          <div className="w-1/3 h-4 rounded-md bg-white/5" />
+                        </div>
+                        <div className="mt-auto space-y-4">
+                          <div className="w-full h-2 rounded-full bg-white/5 overflow-hidden">
+                            <div className="w-1/2 h-full bg-white/10 rounded-full" />
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <div className="w-24 h-4 rounded-md bg-white/5" />
+                            <div className="w-12 h-4 rounded-md bg-white/5" />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -378,6 +426,7 @@ function App(): React.JSX.Element {
         </main>
       </div>
       <UpdatePanel />
+      </div>
     </div>
   )
 }

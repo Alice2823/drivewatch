@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { Search, Square, AlertTriangle, CheckCircle2, Terminal, Shield, ChevronDown, Wrench } from 'lucide-react'
-
-
+import { Search, Square, AlertTriangle, CheckCircle2, Terminal, Shield, ChevronDown, Wrench, Hexagon } from 'lucide-react'
 import logo from '../assets/logo.png'
 
 interface DriveScannerProps {
@@ -260,8 +258,10 @@ export const DriveScanner: React.FC<DriveScannerProps> = React.memo(({ drives })
       {!isScanning && !scanComplete && logLines.length === 0 && (
         <div className="glass-card p-12 flex flex-col items-center justify-center text-center min-h-[400px] relative overflow-hidden">
           <div className="absolute inset-0 bg-gradient-to-b from-primary/5 to-transparent pointer-events-none" />
-          <div className="p-8 rounded-3xl bg-white border border-border mb-8 shadow-2xl relative z-10">
-            <img src={logo} alt="DriveWatch" className="w-24 h-24 object-contain" />
+          <div className="p-8 rounded-3xl bg-card border border-white/5 mb-8 shadow-[0_0_50px_rgba(0,0,0,0.5)] relative z-10 flex items-center justify-center">
+            <div className="w-24 h-24 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center shadow-[0_0_30px_rgba(6,182,212,0.2)]">
+              <img src={logo} alt="DriveWatch" className="w-16 h-16 object-contain" />
+            </div>
           </div>
 
           <h3 className="text-[24px] font-black text-foreground mb-3 relative z-10 tracking-tight">System Ready for Scan</h3>
@@ -272,7 +272,7 @@ export const DriveScanner: React.FC<DriveScannerProps> = React.memo(({ drives })
       )}
 
       {/* Log Output */}
-      {logLines.length > 0 && (
+      {(logLines.length > 0 || isScanning) && (
         <div className="glass-card p-4 md:p-6">
 
           <div className="flex items-center gap-2 mb-4">
@@ -280,6 +280,11 @@ export const DriveScanner: React.FC<DriveScannerProps> = React.memo(({ drives })
             <h4 className="text-xs font-extrabold uppercase tracking-wider text-muted">Scan Output</h4>
           </div>
           <div ref={logRef} className="scan-log">
+            {isScanning && logLines.length === 0 && (
+              <div className="text-muted animate-pulse font-mono text-[11px]">
+                &gt; Waiting for drive response...
+              </div>
+            )}
             {logLines.map((line, i) => {
               let lineClass = 'text-foreground/70'
               if (line.startsWith('[ERROR]')) lineClass = 'text-accent font-bold'

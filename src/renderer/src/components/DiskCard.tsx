@@ -18,8 +18,12 @@ export const DiskCard: React.FC<DiskCardProps> = React.memo(({ data }) => {
   const prevSmoothValRef = useRef<number>(0)
 
   useEffect(() => {
-    const rawVal = (data.readSpeed || 0) + (data.writeSpeed || 0)
-    const clampedVal = Math.min(Math.max(rawVal, 0), 5000)
+    // Prefer % Disk Time (matches Task Manager). Fall back to MB/s if unavailable.
+    const hasUsage = typeof data.usagePercent === 'number' && data.usagePercent >= 0
+    const rawMbps = (data.readSpeed || 0) + (data.writeSpeed || 0)
+    // Scale MB/s to a 0-100 range for the graph (cap at 500 MB/s = 100%)
+    const rawVal = hasUsage ? data.usagePercent : Math.min((rawMbps / 500) * 100, 100)
+    const clampedVal = Math.min(Math.max(rawVal, 0), 100)
 
     let smoothVal: number
     if (clampedVal > prevSmoothValRef.current) {
@@ -36,7 +40,7 @@ export const DiskCard: React.FC<DiskCardProps> = React.memo(({ data }) => {
   }, [data])
 
   const totalSpeed = (data.readSpeed || 0) + (data.writeSpeed || 0)
-  const isDiskIdle = totalSpeed < 0.5
+  const isDiskIdle = (data.usagePercent || 0) < 1 && totalSpeed < 0.1
 
   const renderHistory = useMemo(
     () => history.map((d) => ({ ...d, renderVal: d.val < 0.1 ? 0.05 : d.val })),
@@ -93,37 +97,54 @@ export const DiskCard: React.FC<DiskCardProps> = React.memo(({ data }) => {
 
 
   const toggleExpanded = useCallback(() => setIsExpanded((prev) => !prev), [])
-  
+
+  const [isEjecting, setIsEjecting] = useState(false)
+
   const handleEject = useCallback(async () => {
-    if (!mounts.length) return
-    const driveLetter = mounts[0] // Eject first partition
-    await window.api.ejectDrive(driveLetter)
-  }, [mounts])
+    if (!mounts.length || isEjecting) return
+    const driveLetter = mounts[0]
+    setIsEjecting(true)
+    try {
+      const res = await window.api.ejectDrive(driveLetter)
+      if (res.success) {
+        // Success
+      } else {
+        alert(`Could not eject ${driveLetter}. Make sure no files are open.`)
+      }
+    } finally {
+      setIsEjecting(false)
+    }
+  }, [mounts, isEjecting])
 
 
 
-  const glowIntensity = Math.min(totalSpeed / 100, 1)
-  
+  const glowIntensity = Math.min((data.usagePercent || 0) / 100, 1)
+
   // Color for usage bar
 
-  // Color for usage bar
   const usageBarColor =
     usagePercent > 90
-      ? 'bg-accent'
+      ? 'bg-gradient-to-r from-accent to-accent/60 text-accent'
       : usagePercent > 70
-        ? 'bg-warning'
-        : 'bg-gradient-to-r from-primary to-primary/70'
+        ? 'bg-gradient-to-r from-warning to-warning/60 text-warning'
+        : 'bg-gradient-to-r from-primary to-primary/40 text-primary'
 
   return (
     <div
-      className={`disk-card flex flex-col p-5 md:p-6 overflow-hidden transition-all duration-500 gap-6 relative group ${totalSpeed > 5 ? 'ring-1 ring-primary/30 shadow-[0_0_30px_rgba(var(--color-primary-rgb),0.1)]' : 'ring-1 ring-white/5'
-        } ${data.stale ? 'opacity-70 grayscale-[50%]' : ''}`}
+      className={`glass-card flex flex-col p-5 md:p-6 gap-6 relative group cursor-default ${
+        (data.usagePercent || 0) > 5 
+          ? 'border-primary/20 hover:border-primary/40 shadow-none hover:shadow-[0_0_30px_rgba(6,182,212,0.15)]' 
+          : 'border-transparent hover:border-white/10 hover:bg-surface/30'
+      } ${data.stale ? 'opacity-70 grayscale-[50%]' : ''}`}
     >
+      {/* ── BACKGROUND GRID ── */}
+      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:16px_16px] opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl pointer-events-none" />
+
       {/* ── TOP: Header Section ── */}
-      <div className="flex justify-between items-start gap-4">
+      <div className="flex justify-between items-start gap-4 relative z-10">
         <div className="flex gap-4 min-w-0 flex-1">
           <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-surface/80 to-surface/30 border border-white/10 flex items-center justify-center flex-shrink-0 shadow-inner">
-            <HardDrive className={`w-6 h-6 ${totalSpeed > 5 ? 'text-primary drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]' : 'text-muted'}`} />
+            <HardDrive className={`w-6 h-6 ${(data.usagePercent || 0) > 5 ? 'text-primary drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]' : 'text-muted'}`} />
           </div>
           <div className="min-w-0 flex-1">
             <h3
@@ -138,7 +159,7 @@ export const DiskCard: React.FC<DiskCardProps> = React.memo(({ data }) => {
                 <HardDrive className="w-3.5 h-3.5 text-muted/50" />
                 {data.type || 'HDD'}
               </span>
-              
+
               {mounts.length > 0 && (
                 <>
                   <span className="text-white/10 text-[10px]">•</span>
@@ -172,20 +193,20 @@ export const DiskCard: React.FC<DiskCardProps> = React.memo(({ data }) => {
       </div>
 
       {/* ── MIDDLE: Capacity Section ── */}
-      <div className="flex flex-col gap-1.5">
-        <div className="flex justify-between items-end mb-0.5">
-          <span className="text-[11px] font-bold text-muted uppercase tracking-widest">Storage Capacity</span>
-          <span className="text-[13px] font-black text-foreground">{usagePercent}% <span className="text-[10px] text-muted font-bold ml-0.5">USED</span></span>
+      <div className="flex flex-col gap-1.5 relative z-10">
+        <div className="flex justify-between items-end mb-1">
+          <span className="text-[11px] font-black text-muted uppercase tracking-[0.2em]">Storage Capacity</span>
+          <span className="text-[14px] font-black text-foreground">{usagePercent}% <span className="text-[10px] text-muted font-bold ml-0.5">USED</span></span>
         </div>
-        <div className="h-2 w-full bg-black/40 rounded-full overflow-hidden border border-white/10 shadow-inner relative">
+        <div className="h-2.5 w-full bg-black/40 rounded-full overflow-hidden border border-white/5 relative shadow-inner">
           <div
-            className={`h-full transition-all duration-1000 ease-out rounded-full relative ${usageBarColor}`}
+            className={`h-full transition-all duration-1000 ease-out rounded-full relative ${usageBarColor} shadow-[0_0_20px_currentColor]`}
             style={{ width: `${usagePercent}%` }}
           >
             {/* Inner gradient overlay for depth */}
-            <div className="absolute inset-0 bg-gradient-to-r from-transparent to-white/20 rounded-full" />
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent to-white/40 rounded-full mix-blend-overlay" />
             {/* Glowing leading edge */}
-            <div className="absolute right-0 top-0 bottom-0 w-4 bg-white/40 blur-[2px] rounded-full" />
+            <div className="absolute right-0 top-0 bottom-0 w-8 bg-white blur-[4px] rounded-full opacity-90" />
           </div>
         </div>
         <div className="flex justify-between items-center text-[10px] font-bold text-muted/60 tracking-wider mt-0.5">
@@ -195,72 +216,75 @@ export const DiskCard: React.FC<DiskCardProps> = React.memo(({ data }) => {
       </div>
 
       {/* ── BOTTOM: Performance Area ── */}
-      <div className="flex flex-col gap-4 mt-2">
+      <div className="flex flex-col gap-4 mt-2 relative z-10">
         {/* Read / Write Metrics */}
         <div className="flex items-center justify-between">
-          <div className="flex gap-6">
+          <div className="flex gap-8">
             <div className="flex flex-col">
-              <div className="flex items-center gap-1.5 mb-1">
-                <ChevronDown className="w-3.5 h-3.5 text-success" />
-                <span className="text-[10px] font-bold text-muted uppercase tracking-widest">Read</span>
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <ChevronDown className="w-4 h-4 text-primary" />
+                <span className="text-[10px] font-black text-muted uppercase tracking-[0.2em]">Read</span>
               </div>
               <div className="flex items-baseline gap-1">
-                <span className="text-[20px] font-black text-foreground tabular-nums tracking-tight">
+                <span className="text-[28px] font-black text-foreground tabular-nums tracking-tighter drop-shadow-[0_0_10px_rgba(6,182,212,0.3)]">
                   {formatSpeed(data.readSpeed)}
                 </span>
-                <span className="text-[10px] font-bold text-muted/70 uppercase">
+                <span className="text-[11px] font-black text-primary/80 uppercase">
                   {speedUnit(data.readSpeed)}
                 </span>
               </div>
             </div>
             <div className="flex flex-col">
-              <div className="flex items-center gap-1.5 mb-1">
-                <ChevronUp className="w-3.5 h-3.5 text-primary" />
-                <span className="text-[10px] font-bold text-muted uppercase tracking-widest">Write</span>
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <ChevronUp className="w-4 h-4 text-secondary" />
+                <span className="text-[10px] font-black text-muted uppercase tracking-[0.2em]">Write</span>
               </div>
               <div className="flex items-baseline gap-1">
-                <span className="text-[20px] font-black text-foreground tabular-nums tracking-tight">
+                <span className="text-[28px] font-black text-foreground tabular-nums tracking-tighter drop-shadow-[0_0_10px_rgba(139,92,246,0.3)]">
                   {formatSpeed(data.writeSpeed)}
                 </span>
-                <span className="text-[10px] font-bold text-muted/70 uppercase">
+                <span className="text-[11px] font-black text-secondary/80 uppercase">
                   {speedUnit(data.writeSpeed)}
                 </span>
               </div>
             </div>
           </div>
-          
+
           {/* Active indicator */}
           {!isDiskIdle && (
             <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 animate-pulse">
               <span className="w-1.5 h-1.5 rounded-full bg-primary" />
-              <span className="text-[9px] font-black text-primary uppercase tracking-widest">Active</span>
+              <span className="text-[9px] font-black text-primary uppercase tracking-widest">{Math.round(data.usagePercent || 0)}% Active</span>
             </div>
           )}
         </div>
 
         {/* Graph */}
-        <div className="h-24 w-full relative -mx-1">
+        <div className="h-24 w-full relative -mx-1 mt-2">
+          {/* Subtle animated background glow behind graph */}
+          {!isDiskIdle && (
+             <div className="absolute inset-0 bg-primary/5 blur-xl rounded-full scale-y-50 translate-y-4 opacity-50 transition-opacity duration-1000 pointer-events-none" />
+          )}
           <div className={`absolute inset-0 transition-all duration-1000 ${isDiskIdle ? 'opacity-30 grayscale' : 'opacity-100'}`}>
             <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
-              <AreaChart data={renderHistory} margin={{ top: 5, right: 5, left: 5, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} opacity={0.2} />
-                <YAxis 
-                  orientation="right" 
-                  domain={[0, 100]} 
-                  ticks={[0, 10, 30, 50, 70, 100]}
-                  tick={{ fontSize: 9, fontWeight: 'bold', fill: 'var(--color-muted)', opacity: 0.5 }} 
-                  tickLine={false} 
-                  axisLine={false} 
-                  tickFormatter={(val) => val === 0 ? '' : `${val}`}
-                  width={30}
+              <AreaChart data={renderHistory} margin={{ top: 5, right: 35, left: 5, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} opacity={0.1} />
+                <YAxis
+                  orientation="right"
+                  domain={[0, 100]}
+                  ticks={[0, 25, 50, 75, 100]}
+                  tick={{ fontSize: 10, fontWeight: '900', fill: 'rgba(255,255,255,0.7)', dx: 5 }}
+                  tickLine={false}
+                  axisLine={false}
+                  width={40}
                 />
                 <Area
                   type="monotone"
                   dataKey="renderVal"
                   stroke="var(--color-primary)"
-                  strokeWidth={1.5}
+                  strokeWidth={2}
                   fill="var(--color-primary)"
-                  fillOpacity={0.05}
+                  fillOpacity={0.15}
                   isAnimationActive={false}
                 />
               </AreaChart>
@@ -282,21 +306,25 @@ export const DiskCard: React.FC<DiskCardProps> = React.memo(({ data }) => {
           {data.isRemovable && (
             <button
               onClick={handleEject}
-              className="p-2.5 rounded-xl transition-all duration-300 active:scale-90 border bg-accent/10 text-accent border-accent/20 hover:bg-accent/20 hover:border-accent/40 shadow-sm"
-              title="Safely Eject Drive"
+              disabled={isEjecting}
+              className={`p-2.5 rounded-xl transition-all duration-300 active:scale-90 border shadow-sm ${
+                isEjecting 
+                  ? 'bg-accent/40 text-white border-accent animate-pulse' 
+                  : 'bg-accent/10 text-accent border-accent/20 hover:bg-accent/20 hover:border-accent/40'
+              }`}
+              title={isEjecting ? "Ejecting..." : "Safely Eject Drive"}
             >
-              <CirclePower className="w-6 h-6" />
+              <CirclePower className={`w-6 h-6 ${isEjecting ? 'animate-spin' : ''}`} />
             </button>
 
           )}
 
           <button
             onClick={toggleExpanded}
-            className={`p-2.5 rounded-xl transition-all duration-300 active:scale-90 border ${
-              isExpanded 
-                ? 'bg-primary/20 text-primary border-primary/30 shadow-lg shadow-primary/10' 
+            className={`p-2.5 rounded-xl transition-all duration-300 active:scale-90 border ${isExpanded
+                ? 'bg-primary/20 text-primary border-primary/30 shadow-lg shadow-primary/10'
                 : 'bg-surface/30 text-muted hover:bg-white/10 hover:text-foreground border-white/5 hover:border-white/20'
-            }`}
+              }`}
             title="Hardware Details"
           >
             {isExpanded ? <X className="w-6 h-6" /> : <Info className="w-6 h-6" />}
@@ -307,7 +335,7 @@ export const DiskCard: React.FC<DiskCardProps> = React.memo(({ data }) => {
 
       {/* ── FLOATING DROPDOWN DETAILS ── */}
       {isExpanded && (
-        <div className="absolute bottom-[80px] right-0 sm:right-5 z-50 w-full sm:w-[280px] bg-[#0f172a]/95 backdrop-blur-xl p-5 rounded-2xl shadow-[0_16px_40px_rgba(0,0,0,0.6)] border border-white/10 animate-in fade-in slide-in-from-bottom-4 zoom-in-95 duration-300">
+        <div className="absolute bottom-[80px] right-0 sm:right-5 z-50 w-full sm:w-[280px] glass-panel p-5 rounded-2xl animate-in fade-in slide-in-from-bottom-4 zoom-in-95 duration-300">
           <div className="flex flex-col gap-5">
             {/* Section 1: Identity */}
             <div>

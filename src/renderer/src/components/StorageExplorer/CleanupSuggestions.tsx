@@ -148,7 +148,7 @@ export const CleanupSuggestions: React.FC<{ drivePath?: string }> = ({ drivePath
               </div>
               <div>
                 <h3 className="text-sm font-black uppercase tracking-widest text-foreground/90">Forgotten Giants</h3>
-                <p className="text-[9px] font-bold text-muted/40 uppercase tracking-widest mt-0.5">Size {">"} 500MB • 90d Inactivity</p>
+                <p className="text-[9px] font-bold text-muted/40 uppercase tracking-widest mt-0.5">Size {">"} 10MB • 1D Inactivity</p>
               </div>
             </div>
             <span className="text-[10px] font-black text-muted/20 tracking-[0.2em]">{suggestions.largeUnused.length} UNITS</span>
