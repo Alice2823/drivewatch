@@ -8,7 +8,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(__dirname, 'src/main/index.ts'),
-          storageWorker: resolve(__dirname, 'src/main/services/scanner/storageWorker.ts')
+          storageWorker: resolve(__dirname, 'src/main/services/scanner/storageWorker.ts'),
+          RecoveryWorker: resolve(__dirname, 'src/main/RecoveryWorker.ts')
         }
       }
     }

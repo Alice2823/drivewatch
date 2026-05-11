@@ -2,9 +2,10 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Shield, Thermometer, HardDrive, AlertTriangle, CheckCircle2,
   Clock, Zap, ChevronDown, ChevronUp, RefreshCw, Terminal,
-  Activity, AlertCircle, Info, Hexagon
+  Activity, AlertCircle, Info, Hexagon, ShieldCheck, Wrench
 } from 'lucide-react'
 import logo from '../assets/logo.png'
+import { RepairAssistant } from './repair/RepairAssistant'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -19,7 +20,7 @@ interface DriveInfo {
   isRemovable?: boolean
 }
 
-interface SmartAttr {
+export interface SmartAttr {
   id: number
   name: string
   value: number
@@ -246,6 +247,7 @@ export const DriveHealthScanner: React.FC = () => {
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null)
   const [showSmartTable, setShowSmartTable] = useState(false)
   const [showChkdskLog, setShowChkdskLog] = useState(false)
+  const [showRepair, setShowRepair] = useState(false)
   const logRef = useRef<HTMLDivElement>(null)
 
   // ── Init ────────────────────────────────────────────────────────────────────
@@ -357,6 +359,11 @@ export const DriveHealthScanner: React.FC = () => {
       const mainMount = st.drive.mounts[0]
       if (mainMount) {
         chkdsk = await window.api.health.runChkdsk(mainMount)
+        const fsHealth = await window.api.health.checkFs(mainMount)
+        if (fsHealth.needsRepair || fsHealth.offlineRepairRequired) {
+          // If we found issues, we can flag it to the user
+          console.log(`[Health] FS Issues on ${mainMount}: ${fsHealth.message}`)
+        }
       }
 
       // 3. Calc Score
@@ -592,12 +599,24 @@ export const DriveHealthScanner: React.FC = () => {
               </h4>
               <ul className="space-y-2">
                 {(activeState.score.issues ?? []).map((issue, i) => (
-                  <li key={i} className="flex items-start gap-2 text-sm text-foreground/80">
+                   <li key={i} className="flex items-start gap-2 text-sm text-foreground/80">
                     <span className="text-warning mt-1">•</span>
                     <span>{issue}</span>
                   </li>
                 ))}
               </ul>
+              
+              {!activeState.scanning && activeState.chkdsk && !activeState.chkdsk.clean && (
+                <div className="mt-4 pt-4 border-t border-warning/20">
+                  <button 
+                    onClick={() => setShowRepair(true)}
+                    className="flex items-center gap-2 px-4 py-2 bg-warning/20 hover:bg-warning/30 border border-warning/40 rounded-lg text-warning text-xs font-black uppercase tracking-widest transition-all"
+                  >
+                    <Wrench className="w-4 h-4" />
+                    Launch Repair Assistant
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -697,6 +716,18 @@ export const DriveHealthScanner: React.FC = () => {
             </div>
           )}
 
+        </div>
+      )}
+      {showRepair && activeState && activeState.drive.mounts[0] && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
+          <RepairAssistant 
+            driveLetter={activeState.drive.mounts[0]} 
+            onClose={() => setShowRepair(false)} 
+            onRepairSuccess={() => {
+              // Refresh data after repair
+              runScan(activeState.drive.diskIndex)
+            }}
+          />
         </div>
       )}
     </div>

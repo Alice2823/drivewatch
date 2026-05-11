@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
-import { HardDrive, Activity, ShieldCheck, Zap, Thermometer, Info as InfoIcon, RefreshCcw } from 'lucide-react'
+import { HardDrive, Activity, ShieldCheck, Zap, Thermometer, Info as InfoIcon, RefreshCcw, ShieldAlert } from 'lucide-react'
 import { TopBar } from './components/TopBar'
 import { Sidebar } from './components/Sidebar'
 import { DiskCard } from './components/DiskCard'
@@ -10,9 +10,12 @@ import { CircularProgress } from './components/CircularProgress'
 import { AreaChart, Area, ResponsiveContainer, YAxis, CartesianGrid } from 'recharts'
 import { UpdatePanel } from './components/UpdatePanel'
 import { StorageExplorer } from './components/StorageExplorer/StorageExplorer'
+import { DriveLifespanPanel } from './components/explore/DriveLifespanPanel'
+import { RecoveryLab } from './components/recovery/RecoveryLab'
+import { NASDashboard } from './components/recovery/NASMonitoring'
 import { formatBytes } from './utils'
 
-type TabType = 'dashboard' | 'scanner' | 'health' | 'cleanup'
+type TabType = 'dashboard' | 'scanner' | 'health' | 'cleanup' | 'lifespan' | 'recovery' | 'nas'
 
 /**
  * 🌡️ UNIVERSAL TEMPERATURE FORMATTER
@@ -32,6 +35,7 @@ function App(): React.JSX.Element {
   const [loading, setLoading] = useState(true)
   const [isStatsReady, setIsStatsReady] = useState(false)
   const [activeTab, setActiveTab] = useState<TabType>('dashboard')
+  const [selectedLifespanDisk, setSelectedLifespanDisk] = useState<any>(null)
   const [globalHistory, setGlobalHistory] = useState<{ val: number }[]>([])
   const [cpuHistory, setCpuHistory] = useState<{ val: number }[]>([])
   const [ramHistory, setRamHistory] = useState<{ val: number }[]>([])
@@ -91,11 +95,12 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     fetchDisks()
+    const intervalMs = activeTab === 'dashboard' ? 1000 : activeTab === 'cleanup' || activeTab === 'lifespan' ? 3000 : 5000
     const intervalId = setInterval(() => {
       if (!document.hidden && !isPaused) fetchDisks()
-    }, 1000)
+    }, intervalMs)
     return () => clearInterval(intervalId)
-  }, [isPaused, fetchDisks])
+  }, [activeTab, isPaused, fetchDisks])
 
   useEffect(() => {
     const fetchTelemetry = async () => {
@@ -120,6 +125,8 @@ function App(): React.JSX.Element {
         setSystemStats({ ...sys, gpus })
         setIsStatsReady(true)
 
+        if (activeTab !== 'dashboard') return
+
         // Update Histories per sample (Circular Buffer)
         setCpuHistory(prev => {
           const h = prev.length === 0 ? Array(60).fill(0).map(() => ({ val: 0 })) : prev
@@ -131,13 +138,15 @@ function App(): React.JSX.Element {
           return [...h.slice(-59), { val: Math.round(prevRamSmoothRef.current) }]
         })
 
-        gpus.forEach((g, idx) => {
-          const usage = g.usage || 0
-          prevGpuSmoothRefs.current[idx] = smoothVal(prevGpuSmoothRefs.current[idx] || 0, usage)
-          setGpuHistories(prev => {
+        setGpuHistories(prev => {
+          const next = { ...prev }
+          gpus.forEach((g, idx) => {
+            const usage = g.usage || 0
+            prevGpuSmoothRefs.current[idx] = smoothVal(prevGpuSmoothRefs.current[idx] || 0, usage)
             const h = prev[idx] || Array(60).fill(0).map(() => ({ val: 0 }))
-            return { ...prev, [idx]: [...h.slice(-59), { val: Math.round(prevGpuSmoothRefs.current[idx]) }] }
+            next[idx] = [...h.slice(-59), { val: Math.round(prevGpuSmoothRefs.current[idx]) }]
           })
+          return next
         })
 
       } catch (err) {
@@ -147,11 +156,13 @@ function App(): React.JSX.Element {
       }
     }
 
-    const intervalId = setInterval(fetchTelemetry, 500) // 🚀 High-speed 0.5s updates
+    void fetchTelemetry()
+    const intervalId = setInterval(fetchTelemetry, activeTab === 'dashboard' ? 1000 : 5000)
     return () => clearInterval(intervalId)
-  }, [disks])
+  }, [activeTab])
 
   useEffect(() => {
+    if (activeTab !== 'dashboard') return
     // Use the max active time % across all disks for the global graph
     const maxUsage = disks.length === 0 ? 0 : Math.max(...disks.map(d => d.usagePercent || 0))
     const clampedVal = Math.min(Math.max(maxUsage, 0), 100)
@@ -161,7 +172,7 @@ function App(): React.JSX.Element {
       if (prev.length === 0) return Array(60).fill(0).map(() => ({ val: 0 }))
       return [...prev.slice(-59), { val: smoothVal }]
     })
-  }, [disks])
+  }, [activeTab, disks])
 
   const stats = useMemo(() => {
     if (disks.length === 0) return { avgTemp: null, unitCount: 0, health: 'Unknown', healthColor: 'text-muted' }
@@ -210,7 +221,7 @@ function App(): React.JSX.Element {
     <div className="h-screen w-full flex bg-background overflow-hidden transition-colors duration-300">
       <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
       <div className="flex-1 flex flex-col h-full overflow-y-auto">
-        <div className="w-full max-w-[1300px] mx-auto px-4 md:px-8 py-4 md:py-6 pb-20 flex flex-col flex-1 gap-8 md:gap-12">
+        <div className="w-full max-w-full px-6 py-4 md:py-6 pb-20 flex flex-col flex-1 gap-8 md:gap-12">
           <TopBar lastUpdated={lastUpdated} isPaused={isPaused} onTogglePause={() => setIsPaused(!isPaused)} />
           
           <main className="flex-1 flex flex-col gap-8 md:gap-12">
@@ -220,6 +231,9 @@ function App(): React.JSX.Element {
                   {activeTab === 'dashboard' ? 'Overview' 
                    : activeTab === 'scanner' ? 'Drive Scanner'
                    : activeTab === 'health' ? 'Health Analysis'
+                   : activeTab === 'lifespan' ? 'Intelligence Engine'
+                   : activeTab === 'recovery' ? 'Recovery Lab'
+                   : activeTab === 'nas' ? 'NAS Monitoring'
                    : 'Storage Explorer'}
                 </h2>
                 <div className="flex flex-wrap items-center gap-3 mt-4">
@@ -287,7 +301,7 @@ function App(): React.JSX.Element {
                         tickLine={false} 
                         width={50} 
                       />
-                      <Area type="monotone" dataKey="renderVal" stroke="var(--color-primary)" strokeWidth={2} fill="var(--color-primary)" fillOpacity={0.1} isAnimationActive={true} animationDuration={300} />
+                      <Area type="monotone" dataKey="renderVal" stroke="var(--color-primary)" strokeWidth={2} fill="var(--color-primary)" fillOpacity={0.1} isAnimationActive={false} />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
@@ -327,7 +341,7 @@ function App(): React.JSX.Element {
                       <ResponsiveContainer width="100%" height="100%">
                         <AreaChart data={cpuHistory} margin={{ left: 0, right: -30, top: 0, bottom: 0 }}>
                           <YAxis orientation="right" domain={[0, 100]} ticks={[0, 10, 30, 50, 70, 100]} tick={{ fontSize: 9, fontWeight: 'bold', fill: 'var(--color-muted)', opacity: 0.5 }} axisLine={false} tickLine={false} />
-                          <Area type="monotone" dataKey="val" stroke="var(--color-primary)" strokeWidth={2} fill="var(--color-primary)" fillOpacity={0.1} isAnimationActive={true} animationDuration={300} />
+                          <Area type="monotone" dataKey="val" stroke="var(--color-primary)" strokeWidth={2} fill="var(--color-primary)" fillOpacity={0.1} isAnimationActive={false} />
                         </AreaChart>
                       </ResponsiveContainer>
                     </div>
@@ -343,7 +357,7 @@ function App(): React.JSX.Element {
                       <ResponsiveContainer width="100%" height="100%">
                         <AreaChart data={ramHistory} margin={{ left: 0, right: -30, top: 0, bottom: 0 }}>
                           <YAxis orientation="right" domain={[0, 100]} ticks={[0, 10, 30, 50, 70, 100]} tick={{ fontSize: 9, fontWeight: 'bold', fill: 'var(--color-muted)', opacity: 0.5 }} axisLine={false} tickLine={false} />
-                          <Area type="monotone" dataKey="val" stroke="var(--color-primary)" strokeWidth={2} fill="var(--color-primary)" fillOpacity={0.1} isAnimationActive={true} animationDuration={300} />
+                          <Area type="monotone" dataKey="val" stroke="var(--color-primary)" strokeWidth={2} fill="var(--color-primary)" fillOpacity={0.1} isAnimationActive={false} />
                         </AreaChart>
                       </ResponsiveContainer>
                     </div>
@@ -371,7 +385,7 @@ function App(): React.JSX.Element {
                         <ResponsiveContainer width="100%" height="100%">
                           <AreaChart data={gpuHistories[idx] || []} margin={{ left: 0, right: -30, top: 0, bottom: 0 }}>
                             <YAxis orientation="right" domain={[0, 100]} ticks={[0, 10, 30, 50, 70, 100]} tick={{ fontSize: 9, fontWeight: 'bold', fill: 'var(--color-muted)', opacity: 0.5 }} axisLine={false} tickLine={false} />
-                            <Area type="monotone" dataKey="val" stroke="var(--color-primary)" strokeWidth={2} fill="var(--color-primary)" fillOpacity={0.1} isAnimationActive={true} animationDuration={300} />
+                            <Area type="monotone" dataKey="val" stroke="var(--color-primary)" strokeWidth={2} fill="var(--color-primary)" fillOpacity={0.1} isAnimationActive={false} />
                           </AreaChart>
                         </ResponsiveContainer>
                       </div>
@@ -423,6 +437,84 @@ function App(): React.JSX.Element {
           {activeTab === 'scanner' && <DriveScanner drives={Array.from(new Set(disks.flatMap(d => d.mounts || []))).sort()} />}
           {activeTab === 'health' && <DriveHealthScanner />}
           {activeTab === 'cleanup' && <StorageExplorer disks={disks} />}
+          
+          {activeTab === 'lifespan' && (
+            <div className="flex flex-col gap-6">
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <h2 className="text-3xl font-black text-foreground tracking-tight uppercase italic">Intelligence <span className="text-primary tracking-normal not-italic">Engine</span></h2>
+                  <p className="text-xs font-bold text-muted uppercase tracking-widest mt-1">Drive Lifespan & Reliability Analytics</p>
+                </div>
+                
+                {/* Large Disk Selector for Intelligence Engine */}
+                <div className="flex gap-4 overflow-x-auto pb-2 custom-scrollbar">
+                   {disks.map(d => (
+                     <button 
+                       key={d.id}
+                       onClick={async () => {
+                          const smart = await window.api.health.runSmart(d.diskIndex)
+                          setSelectedLifespanDisk({ ...d, ...smart })
+                       }}
+                       className={`flex items-center gap-4 p-4 min-w-[240px] rounded-2xl border transition-all relative group text-left ${
+                         selectedLifespanDisk?.diskIndex === d.diskIndex 
+                          ? 'bg-primary/10 border-primary/40 shadow-[0_0_30px_rgba(6,182,212,0.15)] scale-[1.02]' 
+                          : 'bg-white/5 border-white/5 hover:bg-white/10 hover:border-white/20'
+                       }`}
+                     >
+                       <div className={`p-3 rounded-xl ${selectedLifespanDisk?.diskIndex === d.diskIndex ? 'bg-primary/20 text-primary' : 'bg-surface text-muted group-hover:text-foreground'}`}>
+                         <HardDrive className="w-6 h-6" />
+                       </div>
+                       <div className="flex flex-col min-w-0">
+                         <span className={`text-xs font-black uppercase tracking-[0.2em] ${selectedLifespanDisk?.diskIndex === d.diskIndex ? 'text-primary' : 'text-muted'}`}>
+                           {d.mounts?.[0] || 'Disk'} {d.diskIndex}
+                         </span>
+                         <span className="text-sm font-bold text-foreground truncate mt-0.5" title={d.name}>
+                           {d.name || 'Local Storage'}
+                         </span>
+                         <span className="text-[10px] font-bold text-muted uppercase tracking-wider">
+                           {formatBytes(d.size)} • {d.type || 'HDD'}
+                         </span>
+                       </div>
+                       {selectedLifespanDisk?.diskIndex === d.diskIndex && (
+                         <div className="absolute top-3 right-3 w-2 h-2 rounded-full bg-primary shadow-[0_0_10px_rgba(6,182,212,1)]" />
+                       )}
+                     </button>
+                   ))}
+                </div>
+              </div>
+
+              {selectedLifespanDisk ? (
+                <DriveLifespanPanel driveData={selectedLifespanDisk} />
+              ) : (
+                <div className="flex flex-col items-center justify-center p-24 glass-card border-dashed border-white/10 opacity-60">
+                   <Zap className="w-12 h-12 text-primary mb-4 animate-pulse" />
+                   <p className="text-sm font-black text-muted uppercase tracking-widest">Select a drive to begin analysis</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'recovery' && (
+             <div className="flex flex-col gap-6 animate-fade-in">
+               <div className="flex flex-col gap-2 mb-4">
+                 <h2 className="text-3xl font-black text-foreground tracking-tight uppercase italic">Recovery <span className="text-primary tracking-normal not-italic">Lab</span></h2>
+                 <p className="text-xs font-bold text-muted uppercase tracking-widest">Deleted Data Recovery System</p>
+               </div>
+               
+               <RecoveryLab disks={disks} />
+             </div>
+          )}
+
+          {activeTab === 'nas' && (
+             <div className="flex flex-col gap-6 animate-fade-in">
+               <div className="flex flex-col gap-2 mb-4">
+                 <h2 className="text-3xl font-black text-foreground tracking-tight uppercase italic">NAS <span className="text-primary tracking-normal not-italic">Monitoring</span></h2>
+                 <p className="text-xs font-bold text-muted uppercase tracking-widest">Network Attached Storage Dashboard</p>
+               </div>
+               
+               <NASDashboard isActive={activeTab === 'nas'} />
+             </div>
+          )}
         </main>
       </div>
       <UpdatePanel />

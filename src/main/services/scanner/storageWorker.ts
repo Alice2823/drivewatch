@@ -18,6 +18,16 @@ interface ScanUpdate {
   }
 }
 
+interface FileNode {
+  name: string
+  path: string
+  size: number
+  type: 'directory' | 'file'
+  lastModified?: number
+  fileCount?: number
+  isJunk?: boolean
+}
+
 const rootPath = path.resolve(workerData.rootPath)
 const JUNK_EXTENSIONS = new Set(['.tmp', '.temp', '.log', '.bak', '.old', '.chk', '.thumb', '.db', '.crdownload', '.part'])
 const JUNK_FOLDERS = ['temp', 'tmp', 'cache', 'prefetch', 'crashreports', 'logs']
@@ -152,7 +162,7 @@ async function scan(currentPath: string) {
     ])
 
     // 1. Instantly send the list with types
-    const initialFiles = entries.map(entry => {
+    const initialFiles: FileNode[] = entries.map(entry => {
       const isSkipped = SKIP_FOLDERS.has(entry.name)
       return {
         name: entry.name,

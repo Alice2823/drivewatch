@@ -99,22 +99,34 @@ export const DiskCard: React.FC<DiskCardProps> = React.memo(({ data }) => {
   const toggleExpanded = useCallback(() => setIsExpanded((prev) => !prev), [])
 
   const [isEjecting, setIsEjecting] = useState(false)
+  const [isEjected, setIsEjected] = useState(false)
 
   const handleEject = useCallback(async () => {
-    if (!mounts.length || isEjecting) return
+    if (!mounts.length || isEjecting || isEjected) return
     const driveLetter = mounts[0]
     setIsEjecting(true)
     try {
-      const res = await window.api.ejectDrive(driveLetter)
+      const res = await window.api.ejectDrive(driveLetter, data.diskIndex)
       if (res.success) {
-        // Success
+        setIsEjected(true)
+        // Native-like toast
+        const toast = document.createElement('div')
+        toast.className = 'fixed bottom-10 right-10 z-[9999] bg-success/20 text-success border border-success/30 px-6 py-4 rounded-2xl shadow-2xl backdrop-blur-xl animate-in slide-in-from-right fade-in duration-500 font-bold uppercase tracking-widest text-sm flex items-center gap-3'
+        toast.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> Drive safely ejected'
+        document.body.appendChild(toast)
+        setTimeout(() => {
+          toast.classList.add('animate-out', 'fade-out', 'slide-out-to-right')
+          setTimeout(() => toast.remove(), 500)
+        }, 4000)
       } else {
-        alert(`Could not eject ${driveLetter}. Make sure no files are open.`)
+        setIsEjecting(false)
+        alert(res.error || `Could not eject ${driveLetter}. Make sure no files are open.`)
       }
-    } finally {
+    } catch (e: any) {
       setIsEjecting(false)
+      alert(e.message || "Critical error during eject")
     }
-  }, [mounts, isEjecting])
+  }, [mounts, isEjecting, isEjected, data.diskIndex])
 
 
 
@@ -129,11 +141,19 @@ export const DiskCard: React.FC<DiskCardProps> = React.memo(({ data }) => {
         ? 'bg-gradient-to-r from-warning to-warning/60 text-warning'
         : 'bg-gradient-to-r from-primary to-primary/40 text-primary'
 
+  if (isEjected) {
+    return (
+      <div className="glass-card flex flex-col p-5 md:p-6 gap-6 relative transition-opacity duration-200 opacity-0 pointer-events-none h-0 overflow-hidden mb-0 border-0" style={{ padding: 0 }} />
+    )
+  }
+
   return (
     <div
-      className={`glass-card flex flex-col p-5 md:p-6 gap-6 relative group cursor-default ${
+      className={`glass-card flex flex-col p-5 md:p-6 gap-6 relative group cursor-default transition-colors duration-150 ${
+        isEjecting ? 'opacity-50 grayscale pointer-events-none' : ''
+      } ${
         (data.usagePercent || 0) > 5 
-          ? 'border-primary/20 hover:border-primary/40 shadow-none hover:shadow-[0_0_30px_rgba(6,182,212,0.15)]' 
+          ? 'border-primary/20 hover:border-primary/40 shadow-none'
           : 'border-transparent hover:border-white/10 hover:bg-surface/30'
       } ${data.stale ? 'opacity-70 grayscale-[50%]' : ''}`}
     >
@@ -144,7 +164,7 @@ export const DiskCard: React.FC<DiskCardProps> = React.memo(({ data }) => {
       <div className="flex justify-between items-start gap-4 relative z-10">
         <div className="flex gap-4 min-w-0 flex-1">
           <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-surface/80 to-surface/30 border border-white/10 flex items-center justify-center flex-shrink-0 shadow-inner">
-            <HardDrive className={`w-6 h-6 ${(data.usagePercent || 0) > 5 ? 'text-primary drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]' : 'text-muted'}`} />
+            <HardDrive className={`w-6 h-6 ${(data.usagePercent || 0) > 5 ? 'text-primary' : 'text-muted'}`} />
           </div>
           <div className="min-w-0 flex-1">
             <h3
@@ -168,7 +188,7 @@ export const DiskCard: React.FC<DiskCardProps> = React.memo(({ data }) => {
                     <span className="text-muted/50">VOL:</span>
                     <div className="flex items-center gap-1">
                       {mounts.map((m: string, i: number) => (
-                        <span key={m} className="text-primary font-black drop-shadow-[0_0_4px_rgba(59,130,246,0.4)]">
+                        <span key={m} className="text-primary font-black">
                           {m}{i < mounts.length - 1 ? ',' : ''}
                         </span>
                       ))}
@@ -182,8 +202,8 @@ export const DiskCard: React.FC<DiskCardProps> = React.memo(({ data }) => {
 
         {/* Temperature Live Readout */}
         <div className="flex flex-col items-end justify-center">
-          <div className="flex items-center gap-2 bg-black/40 border border-white/5 shadow-inner px-3.5 py-1.5 rounded-full backdrop-blur-md">
-            <div className={`w-2 h-2 rounded-full bg-current ${tempColor} animate-pulse shadow-[0_0_8px_currentColor]`} />
+          <div className="flex items-center gap-2 bg-black/40 border border-white/5 shadow-inner px-3.5 py-1.5 rounded-full">
+            <div className={`w-2 h-2 rounded-full bg-current ${tempColor}`} />
             <span className="text-[10px] font-black uppercase tracking-widest text-muted/60">TEMP</span>
             <span className={`text-[15px] font-black tabular-nums tracking-tighter ${tempColor} ml-1`}>
               {data.temperature != null ? `${data.temperature}°C` : '--'}
@@ -200,13 +220,13 @@ export const DiskCard: React.FC<DiskCardProps> = React.memo(({ data }) => {
         </div>
         <div className="h-2.5 w-full bg-black/40 rounded-full overflow-hidden border border-white/5 relative shadow-inner">
           <div
-            className={`h-full transition-all duration-1000 ease-out rounded-full relative ${usageBarColor} shadow-[0_0_20px_currentColor]`}
+            className={`h-full transition-[width] duration-300 ease-out rounded-full relative ${usageBarColor}`}
             style={{ width: `${usagePercent}%` }}
           >
             {/* Inner gradient overlay for depth */}
             <div className="absolute inset-0 bg-gradient-to-r from-transparent to-white/40 rounded-full mix-blend-overlay" />
             {/* Glowing leading edge */}
-            <div className="absolute right-0 top-0 bottom-0 w-8 bg-white blur-[4px] rounded-full opacity-90" />
+            <div className="absolute right-0 top-0 bottom-0 w-2 bg-white/70 rounded-full" />
           </div>
         </div>
         <div className="flex justify-between items-center text-[10px] font-bold text-muted/60 tracking-wider mt-0.5">
@@ -226,7 +246,7 @@ export const DiskCard: React.FC<DiskCardProps> = React.memo(({ data }) => {
                 <span className="text-[10px] font-black text-muted uppercase tracking-[0.2em]">Read</span>
               </div>
               <div className="flex items-baseline gap-1">
-                <span className="text-[28px] font-black text-foreground tabular-nums tracking-tighter drop-shadow-[0_0_10px_rgba(6,182,212,0.3)]">
+                <span className="text-[28px] font-black text-foreground tabular-nums tracking-tighter">
                   {formatSpeed(data.readSpeed)}
                 </span>
                 <span className="text-[11px] font-black text-primary/80 uppercase">
@@ -240,7 +260,7 @@ export const DiskCard: React.FC<DiskCardProps> = React.memo(({ data }) => {
                 <span className="text-[10px] font-black text-muted uppercase tracking-[0.2em]">Write</span>
               </div>
               <div className="flex items-baseline gap-1">
-                <span className="text-[28px] font-black text-foreground tabular-nums tracking-tighter drop-shadow-[0_0_10px_rgba(139,92,246,0.3)]">
+                <span className="text-[28px] font-black text-foreground tabular-nums tracking-tighter">
                   {formatSpeed(data.writeSpeed)}
                 </span>
                 <span className="text-[11px] font-black text-secondary/80 uppercase">
@@ -252,7 +272,7 @@ export const DiskCard: React.FC<DiskCardProps> = React.memo(({ data }) => {
 
           {/* Active indicator */}
           {!isDiskIdle && (
-            <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 animate-pulse">
+            <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20">
               <span className="w-1.5 h-1.5 rounded-full bg-primary" />
               <span className="text-[9px] font-black text-primary uppercase tracking-widest">{Math.round(data.usagePercent || 0)}% Active</span>
             </div>
@@ -263,9 +283,9 @@ export const DiskCard: React.FC<DiskCardProps> = React.memo(({ data }) => {
         <div className="h-24 w-full relative -mx-1 mt-2">
           {/* Subtle animated background glow behind graph */}
           {!isDiskIdle && (
-             <div className="absolute inset-0 bg-primary/5 blur-xl rounded-full scale-y-50 translate-y-4 opacity-50 transition-opacity duration-1000 pointer-events-none" />
+             <div className="absolute inset-0 bg-primary/5 rounded-full scale-y-50 translate-y-4 opacity-40 transition-opacity duration-300 pointer-events-none" />
           )}
-          <div className={`absolute inset-0 transition-all duration-1000 ${isDiskIdle ? 'opacity-30 grayscale' : 'opacity-100'}`}>
+          <div className={`absolute inset-0 transition-opacity duration-200 ${isDiskIdle ? 'opacity-30 grayscale' : 'opacity-100'}`}>
             <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
               <AreaChart data={renderHistory} margin={{ top: 5, right: 35, left: 5, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} opacity={0.1} />

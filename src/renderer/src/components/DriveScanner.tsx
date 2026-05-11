@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { Search, Square, AlertTriangle, CheckCircle2, Terminal, Shield, ChevronDown, Wrench, Hexagon } from 'lucide-react'
 import logo from '../assets/logo.png'
+import { RepairAssistant } from './repair/RepairAssistant'
 
 interface DriveScannerProps {
   drives: string[]
@@ -21,6 +22,7 @@ export const DriveScanner: React.FC<DriveScannerProps> = React.memo(({ drives })
   const [scanResult, setScanResult] = useState<ScanResult | null>(null)
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null)
   const [dropdownOpen, setDropdownOpen] = useState(false)
+  const [showRepair, setShowRepair] = useState(false)
   const logRef = useRef<HTMLDivElement>(null)
 
   // Check admin status on mount
@@ -121,12 +123,7 @@ export const DriveScanner: React.FC<DriveScannerProps> = React.memo(({ drives })
 
   const handleFixDisk = useCallback(() => {
     if (!selectedDrive || isScanning) return
-    setLogLines([])
-    setProgress(0)
-    setScanComplete(false)
-    setScanResult(null)
-    setIsScanning(true)
-    window.api.fixDisk(selectedDrive)
+    setShowRepair(true)
   }, [selectedDrive, isScanning])
 
 
@@ -379,6 +376,18 @@ export const DriveScanner: React.FC<DriveScannerProps> = React.memo(({ drives })
               ))}
             </div>
           )}
+        </div>
+      )}
+      {showRepair && selectedDrive && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
+          <RepairAssistant 
+            driveLetter={selectedDrive} 
+            onClose={() => setShowRepair(false)} 
+            onRepairSuccess={() => {
+              // Refresh by starting a scan after repair
+              handleStartScan()
+            }}
+          />
         </div>
       )}
     </div>

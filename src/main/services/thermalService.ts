@@ -12,7 +12,7 @@ export async function getThermalData() {
   }
 }
 
-export async function validateLhmService() { return true }
-export function setLhmAlive() { }
+export async function validateLhmService(_timeoutMs?: number) { return true }
+export function setLhmAlive(_alive?: boolean) { }
 
 // Thermal monitoring and LibreHardwareMonitor dependency permanently removed to ensure system stability and zero CPU overhead.

@@ -1,0 +1,35 @@
+name: macOS Release Automation
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build-mac:
+    name: Build & Upload macOS Artifacts
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Build & Publish macOS
+        # This script runs electron-vite build and then electron-builder with --publish always.
+        # It will automatically generate DriveWatch.dmg, latest-mac.yml, and blockmap files,
+        # and upload them to the existing GitHub release that triggered this workflow.
+        run: npm run build:mac-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Optimization: bypasses code signing if secrets are not provided,
+          # allowing the build to complete for distribution even without certificates.
+          CSC_IDENTITY_AUTO_DISCOVERY: false

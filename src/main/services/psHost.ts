@@ -9,7 +9,6 @@ interface QueuedCommand {
 }
 
 export class PowerShellHost {
-  private static instance: PowerShellHost
   private static instances: Map<string, PowerShellHost> = new Map()
   private process: ChildProcessWithoutNullStreams | null = null
   private commandQueue: QueuedCommand[] = []
@@ -21,10 +20,14 @@ export class PowerShellHost {
   }
 
   public static getInstance(name: string = 'default'): PowerShellHost {
-    if (!PowerShellHost.instance) {
-      PowerShellHost.instance = new PowerShellHost()
+    const existing = PowerShellHost.instances.get(name)
+    if (existing) {
+      return existing
     }
-    return PowerShellHost.instance
+
+    const instance = new PowerShellHost()
+    PowerShellHost.instances.set(name, instance)
+    return instance
   }
 
   private startProcess() {

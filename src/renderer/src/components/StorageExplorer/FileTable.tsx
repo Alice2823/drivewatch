@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Folder, File, HardDrive } from 'lucide-react'
 
 interface StorageNode {
@@ -26,7 +26,43 @@ const formatBytes = (bytes: number) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
 }
 
+const ROW_HEIGHT = 68
+const OVERSCAN = 8
+
 export const FileTable: React.FC<FileTableProps> = ({ files, onNavigate, onSelect, selectedPaths, isLoading }) => {
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const [scrollTop, setScrollTop] = useState(0)
+  const [viewportHeight, setViewportHeight] = useState(0)
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+
+    const update = () => setViewportHeight(el.clientHeight)
+    update()
+
+    const resizeObserver = new ResizeObserver(update)
+    resizeObserver.observe(el)
+    return () => resizeObserver.disconnect()
+  }, [])
+
+  const visibleRange = useMemo(() => {
+    if (files.length === 0) return { start: 0, end: 0 }
+
+    const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
+    const end = Math.min(
+      files.length,
+      Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) + OVERSCAN
+    )
+
+    return { start, end }
+  }, [files.length, scrollTop, viewportHeight])
+
+  const visibleFiles = useMemo(
+    () => files.slice(visibleRange.start, visibleRange.end),
+    [files, visibleRange.end, visibleRange.start]
+  )
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-surface/10 rounded-2xl border border-white/5 shadow-inner">
       {/* List Header */}
@@ -38,7 +74,11 @@ export const FileTable: React.FC<FileTableProps> = ({ files, onNavigate, onSelec
       </div>
 
       {/* List Body */}
-      <div className="flex-1 overflow-auto flex flex-col p-2 gap-1.5">
+      <div
+        ref={scrollRef}
+        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+        className="flex-1 overflow-auto p-2"
+      >
         {isLoading ? (
           <div className="flex flex-col gap-1.5 p-1">
             {[...Array(8)].map((_, i) => (
@@ -71,26 +111,32 @@ export const FileTable: React.FC<FileTableProps> = ({ files, onNavigate, onSelec
             </div>
           </div>
         ) : (
-          files.map((file) => {
+          <div style={{ height: files.length * ROW_HEIGHT, position: 'relative' }}>
+            <div
+              className="absolute left-0 right-0 flex flex-col gap-1.5"
+              style={{ transform: `translateY(${visibleRange.start * ROW_HEIGHT}px)` }}
+            >
+              {visibleFiles.map((file) => {
             const isSelected = selectedPaths.has(file.path);
             
             // Calculate size visually - make large files pop with warning/accent colors
             const sizeInGB = file.size / (1024 * 1024 * 1024);
             const sizePercent = Math.min((sizeInGB / 5) * 100, 100); // 5GB max scale
-            const sizeColor = sizeInGB > 2 ? 'bg-accent shadow-[0_0_8px_rgba(236,72,153,0.4)]' 
-                            : sizeInGB > 0.5 ? 'bg-warning shadow-[0_0_8px_rgba(245,158,11,0.4)]' 
-                            : 'bg-primary shadow-[0_0_5px_rgba(6,182,212,0.4)]';
+            const sizeColor = sizeInGB > 2 ? 'bg-accent'
+                            : sizeInGB > 0.5 ? 'bg-warning'
+                            : 'bg-primary';
 
             return (
               <div
                 key={file.path}
                 onClick={() => onSelect(file.path)}
                 onDoubleClick={() => file.type === 'directory' && onNavigate(file.path)}
-                className={`flex items-center px-4 py-3 rounded-xl transition-all duration-200 cursor-pointer group active:scale-[0.98] border ${
+                className={`flex items-center px-4 py-3 rounded-xl transition-colors duration-150 cursor-pointer group border ${
                   isSelected 
-                    ? 'bg-primary/10 border-primary/40 shadow-[0_0_20px_rgba(6,182,212,0.1)]' 
-                    : 'bg-surface/5 border-transparent hover:border-white/10 hover:bg-surface/30 hover:-translate-y-[1px]'
+                    ? 'bg-primary/10 border-primary/40'
+                    : 'bg-surface/5 border-transparent hover:border-white/10 hover:bg-surface/30'
                 }`}
+                style={{ height: ROW_HEIGHT }}
               >
                 {/* Checkbox Col */}
                 <div className="w-12 flex justify-center shrink-0">
@@ -141,7 +187,9 @@ export const FileTable: React.FC<FileTableProps> = ({ files, onNavigate, onSelec
                 </div>
               </div>
             )
-          })
+              })}
+            </div>
+          </div>
         )}
       </div>
     </div>

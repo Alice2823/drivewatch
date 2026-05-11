@@ -25,9 +25,9 @@
   --color-muted: #71717a;
   --color-surface: rgba(255, 255, 255, 0.03);
   --color-surface-hover: rgba(255, 255, 255, 0.06);
-  --shadow-card: 0 10px 30px -10px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.02);
-  --shadow-card-hover: 0 20px 40px -10px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 0 1px rgba(255, 255, 255, 0.1);
-  --shadow-glow: 0 0 20px rgba(6, 182, 212, 0.3);
+  --shadow-card: 0 8px 22px -14px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.02);
+  --shadow-card-hover: 0 14px 28px -18px rgba(0, 0, 0, 0.72), inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --shadow-glow: 0 0 12px rgba(6, 182, 212, 0.22);
 }
 
 .dark {
@@ -48,9 +48,9 @@
   --color-muted: #71717a;
   --color-surface: rgba(255, 255, 255, 0.03);
   --color-surface-hover: rgba(255, 255, 255, 0.06);
-  --shadow-card: 0 10px 30px -10px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.02);
-  --shadow-card-hover: 0 20px 40px -10px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 0 1px rgba(255, 255, 255, 0.1);
-  --shadow-glow: 0 0 20px rgba(6, 182, 212, 0.3);
+  --shadow-card: 0 8px 22px -14px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.02);
+  --shadow-card-hover: 0 14px 28px -18px rgba(0, 0, 0, 0.72), inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --shadow-glow: 0 0 12px rgba(6, 182, 212, 0.22);
 }
 
 @theme {
@@ -97,6 +97,10 @@
     position: relative;
   }
 
+  * {
+    box-sizing: border-box;
+  }
+
   ::selection {
     background-color: var(--color-primary);
     color: white;
@@ -114,8 +118,8 @@
   .glass-card,
   .disk-card {
     background: var(--color-card);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     border: 1px solid var(--color-border);
     border-radius: 16px;
     box-shadow: var(--shadow-card);
@@ -127,7 +131,7 @@
 
   .glass-card:hover,
   .disk-card:hover {
-    transform: translateY(-2px) scale(1.01);
+    transform: translateY(-1px);
     box-shadow: var(--shadow-card-hover);
     border-color: rgba(255, 255, 255, 0.1);
     background: rgba(20, 20, 22, 0.7);
@@ -141,8 +145,8 @@
   /* Optimized Panel */
   .glass-panel {
     background: var(--color-elevated);
-    backdrop-filter: blur(24px);
-    -webkit-backdrop-filter: blur(24px);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     border: 1px solid var(--color-border);
     box-shadow: var(--shadow-card-hover);
   }
@@ -225,7 +229,6 @@
   /* Button styles */
   .btn-primary {
     background: rgba(6, 182, 212, 0.1);
-    backdrop-filter: blur(10px);
     color: var(--color-primary);
     font-weight: 800;
     font-size: 13px;
@@ -263,7 +266,6 @@
 
   .btn-danger {
     background: rgba(220, 38, 38, 0.1);
-    backdrop-filter: blur(10px);
     color: #ef4444;
     font-weight: 800;
     font-size: 13px;
@@ -454,9 +456,20 @@
 
 @utility glass-panel {
   background: var(--color-card);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border: 1px solid var(--color-border);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+  }
 }
 
 @utility primary-gradient {

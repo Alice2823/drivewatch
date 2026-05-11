@@ -132,19 +132,18 @@ export function UpdatePanel() {
   const content = getStatusContent()
 
   return (
-    <div className="fixed bottom-10 right-10 z-[100] animate-in fade-in slide-in-from-bottom-8 duration-500">
-      <div className="glass-card w-[440px] overflow-hidden rounded-[24px] border border-white/5 shadow-[0_30px_80px_rgba(0,0,0,0.8)] backdrop-blur-3xl bg-[#030303]/80">
+    <div className="fixed bottom-10 right-10 z-[100] animate-in fade-in slide-in-from-bottom-4 duration-200">
+      <div className="glass-card w-[440px] overflow-hidden rounded-[24px] border border-white/5 shadow-lg bg-[#030303]/90">
         {/* Header */}
         <div className="p-6 flex items-center justify-between border-b border-white/5 bg-white/[0.02]">
           <div className="flex items-center gap-4">
-            <div className="p-2.5 rounded-2xl border border-primary/20 shadow-[0_0_20px_rgba(6,182,212,0.15)] bg-primary/5 relative overflow-hidden">
-              <img src={logo} className="w-8 h-8 object-contain relative z-10 drop-shadow-[0_0_8px_rgba(6,182,212,0.5)]" alt="Logo" />
-              <div className="absolute inset-0 bg-primary/10 blur-xl rounded-2xl" />
+            <div className="p-2.5 rounded-2xl border border-primary/20 bg-primary/5 relative overflow-hidden">
+              <img src={logo} className="w-8 h-8 object-contain relative z-10" alt="Logo" />
             </div>
             <div className="flex flex-col">
               <h4 className="text-[17px] font-black text-foreground uppercase tracking-[0.1em] leading-tight">System Update</h4>
               <div className="flex items-center gap-2 mt-1.5 opacity-80">
-                <span className={`w-2 h-2 rounded-full ${data.status === 'error' ? 'bg-destructive shadow-[0_0_8px_rgba(239,68,68,0.5)]' : 'bg-success shadow-[0_0_8px_rgba(16,185,129,0.5)] animate-pulse'}`} />
+                <span className={`w-2 h-2 rounded-full ${data.status === 'error' ? 'bg-destructive' : 'bg-success'}`} />
                 <span className="text-[10px] font-bold text-muted uppercase tracking-[0.2em] whitespace-nowrap">
                   Core: v{currentVersion}
                 </span>
@@ -184,17 +183,16 @@ export function UpdatePanel() {
             <div className="space-y-4 pt-2">
               <div className="flex items-center justify-between text-[11px] font-black text-foreground/80 uppercase tracking-[0.15em]">
                 <span className="flex items-center gap-2">
-                  <Activity className="w-3.5 h-3.5 text-primary animate-pulse" />
+                  <Activity className="w-3.5 h-3.5 text-primary" />
                   {data.status === 'downloading' ? 'Data Throughput' : 'Deploying Assets'}
                 </span>
                 <span className="text-primary">{Math.round(data.progress || 0)}%</span>
               </div>
               <div className="h-2.5 w-full bg-white/5 rounded-full overflow-hidden border border-white/5 p-[1.5px]">
                 <div 
-                  className="h-full bg-primary rounded-full transition-all duration-500 shadow-[0_0_20px_rgba(var(--color-primary-rgb),0.7)] relative"
+                  className="h-full bg-primary rounded-full transition-[width] duration-200 relative"
                   style={{ width: `${data.progress || 100}%` }}
                 >
-                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer" />
                 </div>
               </div>
               {data.status === 'downloading' && (
@@ -211,7 +209,7 @@ export function UpdatePanel() {
 
           {/* Error Message */}
           {data.status === 'error' && (
-            <div className="flex items-center gap-4 p-4 rounded-2xl bg-destructive/10 border border-destructive/20 shadow-[0_0_30px_rgba(var(--color-destructive-rgb),0.1)]">
+            <div className="flex items-center gap-4 p-4 rounded-2xl bg-destructive/10 border border-destructive/20">
               <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0" />
               <p className="text-[12px] font-bold text-destructive leading-relaxed uppercase tracking-wide">
                 {data.error || 'Server unreachable. Verify internet uplink.'}
@@ -224,7 +222,7 @@ export function UpdatePanel() {
             {(data.status === 'idle' || data.status === 'not-available' || data.status === 'error') && (
               <button
                 onClick={handleCheck}
-                className="w-full py-4 bg-[#0a0a0c] hover:bg-white/[0.03] text-foreground border border-white/5 hover:border-primary/40 rounded-2xl font-black text-[12px] uppercase tracking-[0.2em] transition-all duration-300 flex items-center justify-center gap-3 group relative overflow-hidden shadow-[0_4px_20px_rgba(0,0,0,0.5)] active:scale-[0.98]"
+                className="w-full py-4 bg-[#0a0a0c] hover:bg-white/[0.03] text-foreground border border-white/5 hover:border-primary/40 rounded-2xl font-black text-[12px] uppercase tracking-[0.2em] transition-colors duration-150 flex items-center justify-center gap-3 group relative overflow-hidden active:scale-[0.98]"
               >
                 <div className="absolute inset-0 bg-gradient-to-r from-primary/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                 <Search className="w-5 h-5 text-primary/70 group-hover:text-primary group-hover:scale-110 transition-all duration-300 relative z-10" />
@@ -247,7 +245,7 @@ export function UpdatePanel() {
             {data.status === 'available' && (
               <button
                 onClick={handleDownload}
-                className="w-full py-4 bg-primary hover:bg-primary/90 text-white rounded-2xl font-black text-[12px] uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-3 shadow-[0_15px_30px_rgba(var(--color-primary-rgb),0.4)] group"
+                className="w-full py-4 bg-primary hover:bg-primary/90 text-white rounded-2xl font-black text-[12px] uppercase tracking-[0.2em] transition-colors flex items-center justify-center gap-3 group"
               >
                 <Download className="w-5 h-5 group-hover:translate-y-1 transition-transform" />
                 Download Patch v{data.version}
@@ -259,7 +257,7 @@ export function UpdatePanel() {
               <button
                 onClick={handleInstall}
                 disabled={isInstalling}
-                className={`w-full py-4 bg-success hover:bg-success/90 text-white rounded-2xl font-black text-[12px] uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-3 shadow-[0_15px_30px_rgba(var(--color-success-rgb),0.4)] group ${isInstalling ? 'opacity-50 cursor-not-allowed' : ''}`}
+                className={`w-full py-4 bg-success hover:bg-success/90 text-white rounded-2xl font-black text-[12px] uppercase tracking-[0.2em] transition-colors flex items-center justify-center gap-3 group ${isInstalling ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
                 <RefreshCw className={`w-5 h-5 ${isInstalling ? 'animate-spin' : 'group-hover:rotate-180'} transition-transform duration-700`} />
                 {isInstalling ? 'Preparing Restart...' : 'Restart & Install Now'}
@@ -273,7 +271,7 @@ export function UpdatePanel() {
           <p className="text-[10px] font-bold text-muted/30 uppercase tracking-[0.25em]">
             Protcol: Secure-GitHub-L01
           </p>
-          <div className="w-1.5 h-1.5 rounded-full bg-primary/40 animate-pulse" />
+          <div className="w-1.5 h-1.5 rounded-full bg-primary/40" />
         </div>
       </div>
     </div>

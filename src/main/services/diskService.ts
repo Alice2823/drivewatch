@@ -12,6 +12,7 @@ export interface DiskData {
   used: number
   free: number
   temperature: number | null
+  health: 'Good' | 'Warning' | 'Critical' | 'Unknown'
   readSpeed: number
   writeSpeed: number
   usagePercent?: number

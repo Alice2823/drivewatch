@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { FolderTree } from './FolderTree'
 import { FileTable } from './FileTable'
 import { CleanupSuggestions } from './CleanupSuggestions'
-import { HardDrive, Search, Trash2, ArrowLeft, RefreshCw, AlertTriangle, ChevronRight } from 'lucide-react'
+import { DriveLifespanPanel } from '../explore/DriveLifespanPanel'
+import { HardDrive, Search, Trash2, ArrowLeft, RefreshCw, AlertTriangle, ChevronRight, Zap } from 'lucide-react'
 
 interface StorageNode {
   name: string
@@ -29,20 +30,24 @@ export const StorageExplorer: React.FC<StorageExplorerProps> = ({ disks }) => {
   const [scanProgress, setScanProgress] = useState({ total: 0, processed: 0 })
   const [searchQuery, setSearchQuery] = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
+  const [viewMode, setViewMode] = useState<'files' | 'lifespan'>('files')
+  const [currentDisk, setCurrentDisk] = useState<any>(null)
+  const pendingProgressNodesRef = useRef<any[]>([])
+  const progressFrameRef = useRef<number | null>(null)
 
   // Initialize or update drives from disks data without resetting children
   useEffect(() => {
     if (disks.length > 0) {
       setTreeNodes(prev => {
         const driveNodes: StorageNode[] = []
-        
+
         disks.forEach(disk => {
           if (disk.mounts) {
             disk.mounts.forEach(mount => {
               if (!mount) return
               let path = mount
               if (path.length === 2 && path[1] === ':') path += '\\'
-              
+
               const existing = prev.find(p => p.path === path)
               driveNodes.push({
                 name: mount,
@@ -54,11 +59,11 @@ export const StorageExplorer: React.FC<StorageExplorerProps> = ({ disks }) => {
             })
           }
         })
-        
+
         // Sort to keep order consistent
         return driveNodes.sort((a, b) => a.path.localeCompare(b.path))
       })
-      
+
       // Set initial path if none
       if (!currentPath) {
         const first = disks[0]?.mounts?.[0]
@@ -73,7 +78,7 @@ export const StorageExplorer: React.FC<StorageExplorerProps> = ({ disks }) => {
 
   const loadFolderData = useCallback(async (path: string) => {
     const results = await window.api.storage.list(path)
-    
+
     // Update tree with discovered children
     setTreeNodes(prev => {
       const updateNode = (nodes: StorageNode[]): StorageNode[] => {
@@ -103,14 +108,14 @@ export const StorageExplorer: React.FC<StorageExplorerProps> = ({ disks }) => {
       }
       return updateNode(prev)
     })
-    
+
     return results
   }, [])
 
   // Fetch immediate contents when path changes
   useEffect(() => {
     if (!currentPath) return
-    
+
     const load = async () => {
       setIsLoading(true)
       const results = await loadFolderData(currentPath)
@@ -120,19 +125,46 @@ export const StorageExplorer: React.FC<StorageExplorerProps> = ({ disks }) => {
     load()
   }, [currentPath, loadFolderData])
 
+  // Sync current disk for lifespan analysis (passive, no loading state)
+  useEffect(() => {
+    if (!currentPath || disks.length === 0) return
+
+    const disk = disks.find(d =>
+      d.mounts && d.mounts.some(m => {
+        const mountPath = m.length === 2 && m[1] === ':' ? m + '\\' : m
+        return currentPath.startsWith(mountPath)
+      })
+    )
+
+    if (disk && disk.diskIndex !== undefined) {
+      const hasChangedId = currentDisk?.diskIndex !== disk.diskIndex || currentDisk?.serial !== disk.serial
+      const hasChangedTemp = currentDisk?.temperature !== disk.temperature
+
+      if (hasChangedId) {
+        window.api.health.runSmart(disk.diskIndex).then(smart => {
+          setCurrentDisk({ ...disk, ...smart })
+        }).catch(() => {
+          setCurrentDisk(disk)
+        })
+      } else if (hasChangedTemp) {
+        // Only update if temperature changed to avoid unnecessary renders
+        setCurrentDisk(prev => ({ ...prev, ...disk }))
+      }
+    }
+  }, [currentPath, disks])
+
   // Listen for background scan updates
   useEffect(() => {
-    const cleanup = window.api.storage.onProgress((node: any) => {
-      // Update progress if stats are available
-      if (node.totalItems !== undefined) {
-        setScanProgress({ total: node.totalItems, processed: node.processedItems || 0 })
+    const applyProgressNodes = (nodes: any[]) => {
+      const statsNode = [...nodes].reverse().find((node) => node.totalItems !== undefined)
+      if (statsNode) {
+        setScanProgress({ total: statsNode.totalItems, processed: statsNode.processedItems || 0 })
       }
 
-      // Update tree nodes recursively
       setTreeNodes(prev => {
-        const updateNode = (nodes: StorageNode[]): StorageNode[] => {
+        const updateNode = (tree: StorageNode[], node: any): StorageNode[] => {
           let changed = false
-          const nextNodes = nodes.map(n => {
+          const nextNodes = tree.map(n => {
             if (n.path === node.path) {
               changed = true
               // Merge properties and children
@@ -145,7 +177,7 @@ export const StorageExplorer: React.FC<StorageExplorerProps> = ({ disks }) => {
             // Check if node.path is a subpath of n.path
             const prefix = n.path.endsWith('\\') || n.path.endsWith('/') ? n.path : n.path + '\\'
             if (node.path.startsWith(prefix)) {
-              const updatedChildren = updateNode(n.children || [])
+              const updatedChildren = updateNode(n.children || [], node)
               if (updatedChildren !== n.children) {
                 changed = true
                 return { ...n, children: updatedChildren }
@@ -155,14 +187,28 @@ export const StorageExplorer: React.FC<StorageExplorerProps> = ({ disks }) => {
           })
           return changed ? nextNodes : nodes
         }
-        return updateNode(prev)
+
+        return nodes.reduce((tree, node) => updateNode(tree, node), prev)
       })
 
-      // Update current view if this node is the one we are looking at OR a child of it
-      if (node.path === currentPath) {
-        setViewFiles(node.children || [])
-      } else {
-        setViewFiles(prev => prev.map(f => f.path === node.path ? { ...f, ...node } : f))
+      setViewFiles(prev => {
+        return nodes.reduce((files, node) => {
+          if (node.path === currentPath) return node.children || []
+          return files.map(f => f.path === node.path ? { ...f, ...node } : f)
+        }, prev)
+      })
+    }
+
+    const flushProgress = () => {
+      progressFrameRef.current = null
+      const nodes = pendingProgressNodesRef.current.splice(0)
+      if (nodes.length > 0) applyProgressNodes(nodes)
+    }
+
+    const cleanup = window.api.storage.onProgress((node: any) => {
+      pendingProgressNodesRef.current.push(node)
+      if (progressFrameRef.current === null) {
+        progressFrameRef.current = requestAnimationFrame(flushProgress)
       }
     })
 
@@ -176,6 +222,11 @@ export const StorageExplorer: React.FC<StorageExplorerProps> = ({ disks }) => {
     return () => {
       cleanup()
       cleanupDone()
+      pendingProgressNodesRef.current = []
+      if (progressFrameRef.current !== null) {
+        cancelAnimationFrame(progressFrameRef.current)
+        progressFrameRef.current = null
+      }
     }
   }, [currentPath])
 
@@ -187,6 +238,8 @@ export const StorageExplorer: React.FC<StorageExplorerProps> = ({ disks }) => {
 
   const handleScan = () => {
     if (!currentPath) return
+    setShowSuggestions(false)
+    setViewMode('files')
     setIsScanning(true)
     setScanProgress({ total: 0, processed: 0 })
     window.api.storage.scan(currentPath)
@@ -195,7 +248,7 @@ export const StorageExplorer: React.FC<StorageExplorerProps> = ({ disks }) => {
   const handleDelete = async () => {
     if (selectedPaths.size === 0) return
     if (!confirm(`Are you sure? Moving ${selectedPaths.size} items to Recycle Bin cannot be easily undone.`)) return
-    
+
     const results = await window.api.storage.delete(Array.from(selectedPaths))
     if (results.success) {
       // Refresh current view
@@ -214,67 +267,96 @@ export const StorageExplorer: React.FC<StorageExplorerProps> = ({ disks }) => {
     return currentPath.split(/[\\/]/).filter(Boolean)
   }, [currentPath])
 
+  const handleBack = useCallback(() => {
+    // If we are in a sub-view (Tips or Lifespan), go back to Files view first
+    if (showSuggestions || viewMode === 'lifespan') {
+      setShowSuggestions(false)
+      setViewMode('files')
+      return
+    }
+
+    if (!currentPath) return
+    const normalizedPath = currentPath.replace(/[\\/]$/, '')
+    const lastSlash = Math.max(normalizedPath.lastIndexOf('\\'), normalizedPath.lastIndexOf('/'))
+
+    if (lastSlash !== -1) {
+      let parent = normalizedPath.substring(0, lastSlash)
+      if (parent.length === 2 && parent[1] === ':') parent += '\\'
+      handleNavigate(parent)
+    }
+  }, [currentPath, showSuggestions, viewMode])
+
   return (
     <div className="flex flex-col h-[calc(100vh-160px)] animate-fade-in gap-6">
       {/* Header / Toolbar */}
-      <div className="flex items-center justify-between bg-surface/30 p-5 rounded-3xl border border-white/5 shadow-2xl backdrop-blur-xl">
+      <div className="flex items-center justify-between bg-surface/40 p-5 rounded-3xl border border-white/5 shadow-sm">
         <div className="flex items-center gap-6 flex-1 min-w-0">
-          <button 
-            onClick={() => {
-              const parts = currentPath.split(/[\\/]/).filter(Boolean)
-              if (parts.length > 1) {
-                handleNavigate(parts.slice(0, -1).join('\\') + (currentPath.includes('\\') ? '\\' : '/'))
-              }
-            }}
-            className="p-3 hover:bg-white/10 rounded-2xl text-muted transition-all active:scale-95"
+          <button
+            onClick={handleBack}
+            disabled={!currentPath || (currentPath.length <= 3 && !showSuggestions && viewMode === 'files')}
+            className="p-3 hover:bg-white/10 rounded-2xl text-muted transition-all active:scale-95 disabled:opacity-20 disabled:cursor-not-allowed"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
-          
+
           <div className="flex flex-col min-w-0 flex-1">
-             <div className="flex items-center gap-2 text-[10px] font-black text-muted uppercase tracking-[0.2em] mb-1">
-               <HardDrive className="w-3 h-3" />
-               Current Path
-             </div>
-             <div className="flex items-center gap-1.5 overflow-hidden">
-                {breadcrumbs.map((part, i) => (
+            <div className="flex items-center gap-2 text-[10px] font-black text-muted uppercase tracking-[0.2em] mb-1">
+              <HardDrive className="w-3 h-3" />
+              Current Path
+            </div>
+            <div className="flex items-center gap-1.5 overflow-hidden">
+              {breadcrumbs.map((part, i) => {
+                const isLast = i === breadcrumbs.length - 1;
+                return (
                   <React.Fragment key={i}>
-                    <span className="text-sm font-bold text-foreground/80 hover:text-primary cursor-pointer transition-colors truncate">
+                    <span
+                      onClick={() => {
+                        if (isLast) return;
+                        const pathParts = breadcrumbs.slice(0, i + 1);
+                        let newPath = pathParts.join('\\');
+                        if (newPath.length === 2 && newPath[1] === ':') newPath += '\\';
+                        handleNavigate(newPath);
+                      }}
+                      className={`text-sm font-bold transition-colors truncate ${isLast
+                        ? 'text-foreground/90'
+                        : 'text-muted/60 hover:text-primary cursor-pointer'
+                        }`}
+                    >
                       {part}
                     </span>
-                    {i < breadcrumbs.length - 1 && <ChevronRight className="w-3 h-3 text-muted/30 shrink-0" />}
+                    {!isLast && <ChevronRight className="w-3 h-3 text-muted/30 shrink-0" />}
                   </React.Fragment>
-                ))}
-             </div>
-             
-             {/* Progress Bar */}
-             {isScanning && scanProgress.total > 0 && (
-               <div className="mt-2 flex flex-col gap-1.5 animate-in fade-in slide-in-from-top-1 duration-500">
-                 <div className="flex items-center justify-between">
-                   <span className="text-[9px] font-black text-primary uppercase tracking-[0.1em] animate-pulse">
-                     Analyzing Structure... {Math.round((scanProgress.processed / scanProgress.total) * 100)}%
-                   </span>
-                   <span className="text-[9px] font-bold text-muted/60">
-                     {scanProgress.processed} / {scanProgress.total} Folders
-                   </span>
-                 </div>
-                 <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
-                   <div 
-                     className="h-full bg-primary shadow-[0_0_10px_rgba(6,182,212,0.5)] transition-all duration-300"
-                     style={{ width: `${(scanProgress.processed / scanProgress.total) * 100}%` }}
-                   />
-                 </div>
-               </div>
-             )}
+                );
+              })}
+            </div>
+
+            {/* Progress Bar */}
+            {isScanning && scanProgress.total > 0 && (
+              <div className="mt-2 flex flex-col gap-1.5 animate-in fade-in slide-in-from-top-1 duration-200">
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] font-black text-primary uppercase tracking-[0.1em]">
+                    Analyzing Structure... {Math.round((scanProgress.processed / scanProgress.total) * 100)}%
+                  </span>
+                  <span className="text-[9px] font-bold text-muted/60">
+                    {scanProgress.processed} / {scanProgress.total} Folders
+                  </span>
+                </div>
+                <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-primary transition-[width] duration-200"
+                    style={{ width: `${(scanProgress.processed / scanProgress.total) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
         <div className="flex items-center gap-4">
           <div className="relative group max-w-[360px] flex-1">
-            <div className="absolute inset-0 bg-primary/10 blur-2xl rounded-3xl opacity-0 group-focus-within:opacity-100 transition-opacity duration-700" />
-            <div className="relative flex items-center bg-black/45 border border-white/10 rounded-[1.25rem] pl-5 pr-3 py-2.5 transition-all duration-500 group-focus-within:border-primary/40 group-focus-within:bg-black/60 group-focus-within:shadow-[0_0_30px_rgba(var(--color-primary-rgb),0.1)] shadow-inner">
-              <Search className="w-4 h-4 text-muted/50 group-focus-within:text-primary transition-all duration-500 group-focus-within:scale-110 shrink-0" />
-              <input 
+            <div className="relative flex items-center bg-black/45 border border-white/10 rounded-[1.25rem] pl-5 pr-3 py-2.5 transition-colors duration-150 group-focus-within:border-primary/40 group-focus-within:bg-black/60 shadow-inner">
+              <Search className="w-4 h-4 text-muted/50 group-focus-within:text-primary transition-colors duration-150 shrink-0" />
+              <input
                 type="text"
                 placeholder="Search directory..."
                 value={searchQuery}
@@ -283,18 +365,17 @@ export const StorageExplorer: React.FC<StorageExplorerProps> = ({ disks }) => {
               />
             </div>
           </div>
-          
+
           <div className="flex items-center gap-2 h-10">
-            <button 
+            <button
               onClick={handleScan}
               disabled={isScanning}
-              className={`flex items-center gap-2 px-5 h-full rounded-2xl text-xs font-black uppercase tracking-widest transition-all ${
-                isScanning 
-                  ? 'bg-primary/20 text-primary border border-primary/30 animate-pulse' 
-                  : isDone
-                    ? 'bg-success/20 text-success border border-success/30 shadow-[0_0_15px_rgba(34,197,94,0.2)]'
-                    : 'bg-primary text-white hover:shadow-xl hover:shadow-primary/20 active:scale-95'
-              }`}
+              className={`flex items-center gap-2 px-5 h-full rounded-2xl text-xs font-black uppercase tracking-widest transition-colors duration-150 ${isScanning
+                ? 'bg-primary/20 text-primary border border-primary/30'
+                : isDone
+                  ? 'bg-success/20 text-success border border-success/30'
+                  : 'bg-primary text-white hover:shadow-xl hover:shadow-primary/20 active:scale-95'
+                }`}
             >
               {isScanning ? (
                 <>
@@ -314,20 +395,33 @@ export const StorageExplorer: React.FC<StorageExplorerProps> = ({ disks }) => {
               )}
             </button>
 
-            <button 
+            <button
               onClick={() => setShowSuggestions(!showSuggestions)}
-              className={`flex items-center gap-2 px-5 h-full rounded-2xl text-xs font-black uppercase tracking-widest border transition-all ${
-                showSuggestions 
-                  ? 'bg-warning/10 border-warning/30 text-warning' 
-                  : 'border-white/10 text-muted hover:border-white/20 active:scale-95'
-              }`}
+              className={`flex items-center gap-2 px-5 h-full rounded-2xl text-xs font-black uppercase tracking-widest border transition-all ${showSuggestions
+                ? 'bg-warning/10 border-warning/30 text-warning'
+                : 'border-white/10 text-muted hover:border-white/20 active:scale-95'
+                }`}
             >
               <AlertTriangle className="w-3.5 h-3.5" />
               Smart Tips
             </button>
 
+            <button
+              onClick={() => {
+                setViewMode(viewMode === 'files' ? 'lifespan' : 'files')
+                setShowSuggestions(false)
+              }}
+              className={`flex items-center gap-2 px-5 h-full rounded-2xl text-xs font-black uppercase tracking-widest border transition-all ${viewMode === 'lifespan'
+                ? 'bg-primary/10 border-primary/30 text-primary'
+                : 'border-white/10 text-muted hover:border-white/20 active:scale-95'
+                }`}
+            >
+              <Zap className="w-3.5 h-3.5" />
+              Lifespan
+            </button>
+
             {selectedPaths.size > 0 && (
-              <button 
+              <button
                 onClick={handleDelete}
                 className="flex items-center gap-2 px-5 h-full bg-accent text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:shadow-xl hover:shadow-accent/20 transition-all active:scale-95"
               >
@@ -340,19 +434,23 @@ export const StorageExplorer: React.FC<StorageExplorerProps> = ({ disks }) => {
       </div>
 
       <div className="flex gap-8 flex-1 overflow-hidden">
-        <FolderTree 
-          nodes={treeNodes} 
-          currentPath={currentPath} 
-          onNavigate={handleNavigate} 
-          onExpand={loadFolderData} 
+        <FolderTree
+          nodes={treeNodes}
+          currentPath={currentPath}
+          onNavigate={handleNavigate}
+          onExpand={loadFolderData}
         />
-        
+
         <div className="flex-1 flex flex-col overflow-hidden">
           {showSuggestions ? (
             <CleanupSuggestions drivePath={currentPath.split(/[\\/]/)[0] + (currentPath.includes('\\') ? '\\' : '/')} />
+          ) : viewMode === 'lifespan' ? (
+            <div className="flex-1 overflow-y-auto pr-4 custom-scrollbar">
+              <DriveLifespanPanel driveData={currentDisk} />
+            </div>
           ) : (
-            <FileTable 
-              files={filteredFiles} 
+            <FileTable
+              files={filteredFiles}
               onNavigate={handleNavigate}
               onSelect={(path) => {
                 const next = new Set(selectedPaths)

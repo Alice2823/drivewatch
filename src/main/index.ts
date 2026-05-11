@@ -7,17 +7,23 @@ import { getSystemStats } from './services/systemService'
 import { getGpuUsage } from './services/gpuService'
 import { runSmartScan } from './services/scanner/smartScan'
 import { runQuickHealthCheck } from './services/scanner/quickHealthCheck'
-import { runChkdskScan } from './services/scanner/chkdskScan'
 import { calculateHealthScore } from './services/scanner/healthScore'
+import { runChkdskAction, checkDriveFsHealth, scheduleRebootRepair } from './services/scanner/chkdskScan'
 import { StorageScanner } from './services/scanner/storageScanner'
 import { validateLhmService, setLhmAlive } from './services/thermalService'
 import { UpdaterService } from './services/updaterService'
+import { RecoveryEngine } from './recoveryEngine'
+import { DeviceEjectService } from './services/deviceEjectService'
+
+// Keep DriveWatch from adding its own GPU load while it is measuring GPU load.
+app.disableHardwareAcceleration()
 
 const storageScanner = new StorageScanner()
+let recoveryEngine: RecoveryEngine | null = null
 
 const iconPath = app.isPackaged
-  ? join(process.resourcesPath, 'icon.ico')
-  : join(__dirname, '../../build/icon.ico')
+  ? join(process.resourcesPath, process.platform === 'win32' ? 'icon.ico' : 'icon.icns')
+  : join(__dirname, '../../build', process.platform === 'win32' ? 'icon.ico' : 'icon.icns')
 
 /**
  * 🛡️ DETERMINISTIC STARTUP & WATCHDOG
@@ -65,7 +71,7 @@ async function startHardwareMonitor() {
   }
 }
 
-function createWindow(): void {
+function createWindow(): BrowserWindow {
   const mainWindow = new BrowserWindow({
     width: 1100,
     height: 750,
@@ -98,6 +104,8 @@ function createWindow(): void {
   const updater = UpdaterService.getInstance()
   updater.setMainWindow(mainWindow)
   updater.init()
+
+  return mainWindow
 }
 
 app.whenReady().then(async () => {
@@ -116,7 +124,12 @@ app.whenReady().then(async () => {
   // --- IPC HANDLERS ---
   ipcMain.handle('is-admin', async () => {
     try {
-      execSync('net session', { stdio: 'ignore' })
+      if (process.platform === 'win32') {
+        execSync('net session', { stdio: 'ignore' })
+      } else {
+        const uid = execSync('id -u').toString().trim()
+        if (uid !== '0') return false
+      }
       return true
     } catch { return false }
   })
@@ -137,92 +150,8 @@ app.whenReady().then(async () => {
     try { return await getGpuUsage() } catch { return [] }
   })
 
-  ipcMain.handle('eject-drive', async (_, driveLetter: string) => {
-    const letter = driveLetter.replace(/\\/g, '').toUpperCase()
-    const drivePath = letter.endsWith(':') ? `${letter}\\` : `${letter}:\\`
-    
-    console.log(`[EjectPipeline] Starting safeEjectDrive for ${letter}`)
-
-    // --- STEP 1: HARD STOP ALL INTERNAL USAGE ---
-    const { stopMonitoring, resumeMonitoring } = require('./services/diskService')
-    
-    async function stopAllDriveProcesses() {
-      console.log(`[EjectPipeline] Step 1: Stopping internal monitoring and scans`)
-      stopMonitoring()
-      
-      if (storageScanner.currentScanPath && storageScanner.currentScanPath.toUpperCase().startsWith(letter)) {
-        console.log(`[EjectPipeline] Terminating active storage worker for ${letter}`)
-        storageScanner.stopScan()
-      }
-    }
-
-    // --- STEP 4 & 5: EJECT LOGIC ---
-    function performEject() {
-      const script = `
-        $letter = "${letter}"
-        $path = "${drivePath}"
-        try {
-          # Primary: Shell.Application Eject
-          $shell = New-Object -ComObject Shell.Application
-          $item = $shell.Namespace(17).ParseName($path)
-          if ($item) {
-            $verb = $item.Verbs() | Where-Object { $_.Name.Replace('&', '') -match 'Eject|Safely Remove' }
-            if ($verb) { $verb.DoIt(); return "Success" }
-          }
-          
-          # Fallback: mountvol /p
-          mountvol $letter /P
-          if ($LASTEXITCODE -eq 0) { return "Success" }
-          
-          return "InUse"
-        } catch { return "Error: $($_.Exception.Message)" }
-      `
-      const cleanScript = script.replace(/\n/g, ';').replace(/\s+/g, ' ')
-      return execSync(`powershell -NoProfile -Command "${cleanScript}"`).toString().trim()
-    }
-
-    try {
-      // Execute Pipeline
-      await stopAllDriveProcesses()
-      
-      // --- STEP 2: MEMORY + HANDLE FLUSH ---
-      if (global.gc) { global.gc() }
-      
-      // --- STEP 3: OS STABILIZATION WINDOW ---
-      console.log(`[EjectPipeline] Step 3: Awaiting OS stabilization (1500ms)`)
-      await new Promise(r => setTimeout(r, 1500))
-
-      // --- STEP 4 & 5: PRIMARY + FALLBACK ---
-      let result = performEject()
-      
-      // --- STEP 6: FINAL RETRY ---
-      if (!result.includes('Success')) {
-        console.log(`[EjectPipeline] Step 6: Initial attempt failed, retrying after 800ms...`)
-        await new Promise(r => setTimeout(r, 800))
-        result = performEject()
-      }
-
-      console.log(`[EjectPipeline] Final result: ${result}`)
-      
-      if (result.includes('Success')) {
-        // Recovery: Wait a bit before resuming monitoring
-        setTimeout(resumeMonitoring, 2000)
-        return { success: true }
-      } else {
-        resumeMonitoring()
-        return { 
-          success: false, 
-          error: "Drive is currently in use by another application." 
-        }
-      }
-    } catch (err: any) {
-      console.log(`[EjectPipeline] Critical error: ${err.message}`)
-      resumeMonitoring()
-      return { 
-        success: false, 
-        error: "Drive is currently in use by another application." 
-      }
-    }
+  ipcMain.handle('eject-drive', async (_, driveLetter: string, diskIndex: number) => {
+    return await DeviceEjectService.safelyEjectDrive(driveLetter, diskIndex)
   })
 
   ipcMain.handle('health:get-drives', async () => {
@@ -230,42 +159,78 @@ app.whenReady().then(async () => {
     return disks.map((d) => ({ ...d }))
   })
 
+  ipcMain.handle('health:check-fs', async (_, drive) => {
+    return await checkDriveFsHealth(drive)
+  })
+
   ipcMain.handle('health:run-smart', async (_, idx) => await runSmartScan(idx))
   ipcMain.handle('health:quick-check', async () => await runQuickHealthCheck())
-  ipcMain.handle('health:run-chkdsk', async (event, drive) => {
-    return await runChkdskScan(drive, 
+  
+  ipcMain.handle('health:run-chkdsk', async (event, drive, mode = 'scan') => {
+    return await runChkdskAction(drive, mode,
       (line) => event.sender.send('health:chkdsk-output', { driveLetter: drive, line }),
       (pct) => event.sender.send('health:chkdsk-progress', { driveLetter: drive, progress: pct })
     )
   })
 
+  ipcMain.handle('health:schedule-reboot', async (_, drive) => {
+    return await scheduleRebootRepair(drive)
+  })
+
   ipcMain.handle('health:get-score', async (_, p) => calculateHealthScore(p))
+
+  let activeChkdskSignal: AbortController | null = null
 
   ipcMain.on('scan-disk', async (event, drive) => {
     console.log(`[Scanner] Starting scan for ${drive}`)
-    const res = await runChkdskScan(drive, 
-      (line) => event.sender.send('scan-output', { line }),
-      (progress) => event.sender.send('scan-progress', { progress })
-    )
-    event.sender.send('scan-finished', { success: res.clean })
+    if (activeChkdskSignal) activeChkdskSignal.abort()
+    activeChkdskSignal = new AbortController()
+
+    event.sender.send('scan-output', { line: '[INFO] Initializing engine...' })
+    
+    try {
+      const res = await runChkdskAction(drive, 'scan',
+        (line) => event.sender.send('scan-output', { line }),
+        (progress) => event.sender.send('scan-progress', { progress }),
+        activeChkdskSignal.signal
+      )
+      event.sender.send('scan-finished', { success: res.clean })
+    } catch (err: any) {
+      event.sender.send('scan-output', { line: `[ERROR] ${err.message}` })
+      event.sender.send('scan-finished', { success: false })
+    } finally {
+      activeChkdskSignal = null
+    }
   })
 
   ipcMain.on('fix-disk', async (event, drive) => {
     console.log(`[Scanner] Starting fix for ${drive}`)
-    // We use the same scan utility but the user intended to 'fix'.
-    // Note: /f requires unmounting or reboot if drive is in use.
-    // For simplicity, we stick to /scan for now which reports issues.
-    const res = await runChkdskScan(drive, 
-      (line) => event.sender.send('scan-output', { line }),
-      (progress) => event.sender.send('scan-progress', { progress })
-    )
-    event.sender.send('scan-finished', { success: res.clean })
+    if (activeChkdskSignal) activeChkdskSignal.abort()
+    activeChkdskSignal = new AbortController()
+
+    event.sender.send('scan-output', { line: '[INFO] Initializing fix engine...' })
+
+    try {
+      const res = await runChkdskAction(drive, 'scan',
+        (line) => event.sender.send('scan-output', { line }),
+        (progress) => event.sender.send('scan-progress', { progress }),
+        activeChkdskSignal.signal
+      )
+      event.sender.send('scan-finished', { success: res.clean })
+    } catch (err: any) {
+      event.sender.send('scan-output', { line: `[ERROR] ${err.message}` })
+      event.sender.send('scan-finished', { success: false })
+    } finally {
+      activeChkdskSignal = null
+    }
   })
 
   ipcMain.on('stop-scan', () => {
-    // Note: runChkdskScan doesn't expose the child process to be killed globally here.
-    // However, it finishes when the process is closed.
     console.log(`[Scanner] Stop requested`)
+    if (activeChkdskSignal) {
+      activeChkdskSignal.abort()
+      activeChkdskSignal = null
+    }
   })
 
   ipcMain.handle('storage:list', async (_, path) => await storageScanner.listFolder(path))
@@ -288,14 +253,117 @@ app.whenReady().then(async () => {
   ipcMain.on('storage:stop', () => storageScanner.stopScan())
   ipcMain.handle('storage:get-suggestions', (_, path) => storageScanner.getSuggestions(path))
   ipcMain.handle('storage:delete', async (_, paths) => {
-    let count = 0; let errors = []
+    let count = 0; const errors: string[] = []
     for (const p of paths) {
       try { await shell.trashItem(p); count++ } catch (err: any) { errors.push(err.message) }
     }
     return { success: errors.length === 0, deletedCount: count, errors }
   })
 
-  createWindow()
+  // --- RECOVERY LAB IPC ---
+  ipcMain.on('recovery:start-scan', (_, { drivePath, mode }) => {
+    recoveryEngine?.startScan(drivePath, mode)
+  })
+
+  ipcMain.on('recovery:pause-scan', () => {
+    recoveryEngine?.pauseScan()
+  })
+
+  ipcMain.on('recovery:resume-scan', () => {
+    recoveryEngine?.resumeScan()
+  })
+
+  ipcMain.on('recovery:stop-scan', () => {
+    recoveryEngine?.stopScan()
+  })
+
+  ipcMain.handle('recovery:recover-file', async (_, { file, destinationPath }) => {
+    // If no destination provided, show folder picker
+    let dest = destinationPath
+    if (!dest && recoveryEngine) {
+      dest = await recoveryEngine.selectDestination()
+      if (!dest) return { success: false, error: 'No destination selected' }
+    }
+    return await recoveryEngine?.recoverFile(file, dest)
+  })
+
+  ipcMain.handle('recovery:select-destination', async () => {
+    return await recoveryEngine?.selectDestination()
+  })
+
+  // --- NAS MONITORING IPC ---
+  const nasService = await import('./services/nasService')
+
+  ipcMain.handle('nas:discover', async () => {
+    try { return await nasService.discoverNASDevices() }
+    catch (err: any) { return { devices: [], scanDurationMs: 0, networkRange: '', error: err.message } }
+  })
+
+  ipcMain.handle('nas:test-connection', async (_, config) => {
+    try { return await nasService.testNASConnection(config) }
+    catch (err: any) { return { success: false, latencyMs: 0, error: err.message } }
+  })
+
+  ipcMain.handle('nas:ping', async (_, host) => {
+    try { return await nasService.pingNASDevice(host) }
+    catch { return { online: false, latencyMs: -1 } }
+  })
+
+  ipcMain.handle('nas:storage-info', async (_, host, shareName) => {
+    try { return await nasService.getNASStorageInfo(host, shareName) }
+    catch (err: any) { return { totalCapacity: 0, usedSpace: 0, freeSpace: 0, usagePercent: 0, error: err.message } }
+  })
+
+  // Real TrueNAS data fetch (SSH-based)
+  const nasDataService = await import('./services/nasDataService')
+
+  ipcMain.handle('nas:fetch-data', async (_, config: { host: string; username: string; password: string; port?: number; protocol?: string; shares?: string[] }) => {
+    try {
+      // Route 1: SSH protocol — full TrueNAS data via SSH commands
+      if (config.protocol === 'ssh') {
+        const data = await nasDataService.fetchTrueNASData(config.host, config.username, config.password, config.port || 22)
+        
+        // Accept partial data: If we got pools OR disks OR datasets, we successfully authenticated and parsed something.
+        if ((data.pools && data.pools.length > 0) || (data.disks && data.disks.length > 0) || (data.datasets && data.datasets.length > 0)) {
+          return { success: true, ...data }
+        }
+        
+        // STRICT SSH: Never silently fall back to SMB if user explicitly chose SSH
+        if (data.error) {
+          return { success: false, pools: [], datasets: [], shares: [], disks: [], error: `SSH Authentication or Command Failed: ${data.error}` }
+        }
+        return { success: false, pools: [], datasets: [], shares: [], disks: [], error: 'SSH connection succeeded but returned no valid storage data. Check TrueNAS permissions.' }
+      }
+
+      // Route 2: SMB protocol — enumerate shares and query each share's storage
+      // First get the list of shares from discovery or from config
+      let shareList = config.shares || []
+      if (shareList.length === 0) {
+        try {
+          const { exec: cpExec } = await import('child_process')
+          const { promisify: pUtil } = await import('util')
+          const runCmd = pUtil(cpExec)
+          const { stdout } = await runCmd(`net view \\\\${config.host} /all 2>nul`, { timeout: 8000 })
+          const lines = stdout.split('\n').filter((l: string) => l.includes('Disk'))
+          shareList = lines.map((l: string) => l.trim().split(/\s{2,}/)[0]).filter(Boolean)
+        } catch { /* enumeration failure is non-critical */ }
+      }
+
+      if (shareList.length > 0) {
+        const smb = await nasDataService.fetchSMBShareStorage(config.host, shareList, config.username, config.password)
+        if (smb.volumes && smb.volumes.length > 0) {
+          return { success: true, pools: [], datasets: [], shares: [], disks: [], smbVolumes: smb.volumes }
+        }
+      }
+
+      return { success: false, pools: [], datasets: [], shares: [], disks: [], error: 'Could not retrieve storage data' }
+    } catch (err: any) {
+      return { success: false, pools: [], datasets: [], shares: [], disks: [], error: err.message }
+    }
+  })
+
+  const mainWindow = createWindow()
+  recoveryEngine = new RecoveryEngine(mainWindow)
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

@@ -13,12 +13,15 @@ const execFileAsync = promisify(execFile)
 
 const getBundledSmartctl = () => {
   try {
+    const isWin = process.platform === 'win32'
+    const binName = isWin ? 'smartctl.exe' : 'smartctl'
+
     // production (after build)
-    const prod = path.join(process.resourcesPath, 'smartctl.exe')
+    const prod = path.join(process.resourcesPath, binName)
     if (existsSync(prod)) return prod
 
     // development mode
-    const dev = path.join(process.cwd(), 'build', 'resources', 'smartctl.exe')
+    const dev = path.join(process.cwd(), 'build', 'resources', binName)
     if (existsSync(dev)) return dev
   } catch {}
 
@@ -279,6 +282,13 @@ async function runSmartctl(smartctlPath: string, diskIndex: number): Promise<Sma
 // ─────────────────────────────────────────────
 
 async function runWmiFallback(diskIndex: number): Promise<SmartResult> {
+  if (process.platform !== 'win32') {
+    return {
+      ...DEFAULT_FALLBACK,
+      error: 'WMI fallback only available on Windows'
+    }
+  }
+
   const psHost = PowerShellHost.getInstance()
 
   const script = `

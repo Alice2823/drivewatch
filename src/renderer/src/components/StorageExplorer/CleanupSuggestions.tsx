@@ -62,10 +62,9 @@ export const CleanupSuggestions: React.FC<{ drivePath?: string }> = ({ drivePath
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-6 text-muted">
          <div className="relative">
-           <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full animate-pulse" />
            <Sparkles className="w-12 h-12 animate-spin-slow text-primary/60 relative z-10" />
          </div>
-         <span className="text-[10px] font-black uppercase tracking-[0.3em] animate-pulse">Synthesizing Neural Insights...</span>
+         <span className="text-[10px] font-black uppercase tracking-[0.3em]">Synthesizing Neural Insights...</span>
       </div>
     )
   }
@@ -73,17 +72,15 @@ export const CleanupSuggestions: React.FC<{ drivePath?: string }> = ({ drivePath
   return (
     <div className="flex-1 overflow-y-auto pr-4 scrollbar-thin scrollbar-thumb-white/10 space-y-10 pb-12 animate-fade-in">
       {/* ── PREMIUM OPTIMIZATION BANNER ── */}
-      <div className="relative overflow-hidden rounded-[3rem] border border-white/10 bg-[#080808]/40 backdrop-blur-3xl shadow-2xl group">
+      <div className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-[#080808]/70 shadow-lg group">
         {/* Animated Background Orbs */}
-        <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-primary/10 blur-[140px] rounded-full -mr-80 -mt-80 animate-pulse duration-[4000ms]" />
-        <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-accent/5 blur-[120px] rounded-full -ml-40 -mb-40" />
+        <div className="absolute inset-x-0 top-0 h-1 bg-primary/40" />
         
         <div className="relative z-10 p-12 flex flex-col xl:flex-row items-center justify-between gap-12">
           <div className="flex flex-col md:flex-row items-center gap-10 text-center md:text-left">
             <div className="relative group/icon">
-              <div className="absolute inset-0 bg-primary/30 blur-3xl rounded-full opacity-0 group-hover/icon:opacity-100 transition-opacity duration-1000" />
               <div className="relative w-24 h-24 flex items-center justify-center bg-gradient-to-br from-white/10 to-transparent rounded-[2.5rem] border border-white/10 shadow-inner overflow-hidden">
-                <Sparkles className={`w-12 h-12 ${isOptimizing ? 'animate-spin text-primary' : 'text-primary'} transition-all duration-700 group-hover/icon:scale-125 group-hover/icon:rotate-12`} />
+                <Sparkles className={`w-12 h-12 ${isOptimizing ? 'animate-spin text-primary' : 'text-primary'} transition-colors duration-150`} />
                 {isOptimizing && (
                   <div className="absolute inset-0 border-4 border-primary/20 border-t-primary rounded-[2.5rem] animate-spin" />
                 )}
@@ -96,7 +93,7 @@ export const CleanupSuggestions: React.FC<{ drivePath?: string }> = ({ drivePath
                   Quantum Engine v2.4
                 </span>
                 {optResult && (
-                  <span className="px-4 py-1.5 rounded-full bg-success/10 border border-success/20 text-[9px] font-black text-success uppercase tracking-[0.2em] animate-bounce">
+                  <span className="px-4 py-1.5 rounded-full bg-success/10 border border-success/20 text-[9px] font-black text-success uppercase tracking-[0.2em]">
                     Purge Success
                   </span>
                 )}
@@ -116,17 +113,16 @@ export const CleanupSuggestions: React.FC<{ drivePath?: string }> = ({ drivePath
           <button 
             onClick={handleOptimize}
             disabled={isOptimizing}
-            className={`group relative overflow-hidden px-14 py-6 rounded-[2rem] font-black text-[11px] uppercase tracking-[0.3em] transition-all duration-700 shadow-2xl ${
+            className={`group relative overflow-hidden px-14 py-6 rounded-[1.5rem] font-black text-[11px] uppercase tracking-[0.3em] transition-colors duration-150 shadow-lg ${
               isOptimizing 
                 ? 'bg-white/5 text-muted cursor-not-allowed border border-white/5' 
-                : 'bg-primary text-white hover:shadow-[0_25px_60px_-15px_rgba(var(--color-primary-rgb),0.6)] hover:scale-[1.03] active:scale-95'
+                : 'bg-primary text-white hover:bg-primary-hover active:scale-95'
             }`}
           >
-            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
             <span className="relative z-10 flex items-center gap-3">
               {isOptimizing ? (
                 <>
-                  <div className="w-2 h-2 bg-white rounded-full animate-ping" />
+                  <div className="w-2 h-2 bg-white rounded-full" />
                   Running Neural Purge...
                 </>
               ) : (
@@ -154,7 +150,7 @@ export const CleanupSuggestions: React.FC<{ drivePath?: string }> = ({ drivePath
             <span className="text-[10px] font-black text-muted/20 tracking-[0.2em]">{suggestions.largeUnused.length} UNITS</span>
           </div>
           
-          <div className="bg-surface/10 rounded-[2.5rem] border border-white/5 overflow-hidden shadow-xl">
+          <div className="bg-surface/10 rounded-[1.5rem] border border-white/5 overflow-hidden shadow-sm">
             {suggestions.largeUnused.length === 0 ? (
               <div className="py-24 text-center">
                 <div className="inline-flex p-4 bg-white/5 rounded-full mb-4">
@@ -165,7 +161,7 @@ export const CleanupSuggestions: React.FC<{ drivePath?: string }> = ({ drivePath
             ) : (
               <div className="divide-y divide-white/[0.03]">
                 {suggestions.largeUnused.slice(0, 15).map(file => (
-                  <div key={file.path} className="group flex items-center justify-between p-6 hover:bg-white/[0.02] transition-all duration-300">
+                  <div key={file.path} className="group flex items-center justify-between p-6 hover:bg-white/[0.02] transition-colors duration-150">
                     <div className="flex items-center gap-5 min-w-0">
                       <div className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center shrink-0 group-hover:bg-warning/10 transition-colors">
                         <FileText className="w-6 h-6 text-muted/30 group-hover:text-warning/60" />
@@ -181,7 +177,7 @@ export const CleanupSuggestions: React.FC<{ drivePath?: string }> = ({ drivePath
                     </div>
                     <button 
                       onClick={() => handleDelete(file.path)}
-                      className="p-4 bg-white/0 rounded-2xl opacity-0 group-hover:opacity-100 transition-all hover:bg-accent/20 hover:text-accent transform group-hover:translate-x-0 translate-x-4"
+                      className="p-4 bg-white/0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity hover:bg-accent/20 hover:text-accent"
                     >
                       <Trash2 className="w-5 h-5" />
                     </button>
@@ -207,7 +203,7 @@ export const CleanupSuggestions: React.FC<{ drivePath?: string }> = ({ drivePath
             <span className="text-[10px] font-black text-muted/20 tracking-[0.2em]">{suggestions.junkFiles.length} CLUSTERS</span>
           </div>
 
-          <div className="bg-surface/10 rounded-[2.5rem] border border-white/5 overflow-hidden shadow-xl">
+          <div className="bg-surface/10 rounded-[1.5rem] border border-white/5 overflow-hidden shadow-sm">
             {suggestions.junkFiles.length === 0 ? (
               <div className="py-24 text-center">
                  <div className="inline-flex p-4 bg-white/5 rounded-full mb-4">
@@ -218,7 +214,7 @@ export const CleanupSuggestions: React.FC<{ drivePath?: string }> = ({ drivePath
             ) : (
               <div className="divide-y divide-white/[0.03]">
                 {suggestions.junkFiles.slice(0, 15).map(file => (
-                  <div key={file.path} className="group flex items-center justify-between p-6 hover:bg-white/[0.02] transition-all duration-300">
+                  <div key={file.path} className="group flex items-center justify-between p-6 hover:bg-white/[0.02] transition-colors duration-150">
                     <div className="flex items-center gap-5 min-w-0">
                       <div className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center shrink-0 group-hover:bg-primary/10 transition-colors">
                         <DatabaseIcon className="w-6 h-6 text-muted/30 group-hover:text-primary/60" />
@@ -234,7 +230,7 @@ export const CleanupSuggestions: React.FC<{ drivePath?: string }> = ({ drivePath
                     </div>
                     <button 
                       onClick={() => handleDelete(file.path)}
-                      className="p-4 bg-white/0 rounded-2xl opacity-0 group-hover:opacity-100 transition-all hover:bg-accent/20 hover:text-accent transform group-hover:translate-x-0 translate-x-4"
+                      className="p-4 bg-white/0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity hover:bg-accent/20 hover:text-accent"
                     >
                       <Trash2 className="w-5 h-5" />
                     </button>
