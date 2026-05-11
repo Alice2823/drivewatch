@@ -23,13 +23,25 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      - name: Build & Publish macOS
+      - name: Build macOS
         # This script runs electron-vite build and then electron-builder with --publish always.
-        # It will automatically generate DriveWatch.dmg, latest-mac.yml, and blockmap files,
-        # and upload them to the existing GitHub release that triggered this workflow.
+        # This ensures all updater files (DMG, latest-mac.yml, and blockmaps) are generated.
+        # Even if the internal publisher fails to upload to an existing release,
+        # the next step will explicitly upload them.
         run: npm run build:mac-ci
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Optimization: bypasses code signing if secrets are not provided,
-          # allowing the build to complete for distribution even without certificates.
           CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload Artifacts to GitHub Release
+        # Using softprops/action-gh-release to explicitly upload the generated 
+        # assets to the release that triggered this workflow.
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
+        with:
+          files: |
+            dist/DriveWatch.dmg
+            dist/latest-mac.yml
+            dist/*.blockmap
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
