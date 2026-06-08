@@ -7,19 +7,32 @@ on:
 jobs:
   build-mac:
     name: Build & Upload macOS Artifacts (Universal)
-    # ── CRITICAL FIX ──────────────────────────────────────────────────────────
-    # "macos-latest" was changed by GitHub in late 2024 to run on Apple Silicon
-    # (arm64 / macos-14). Building a universal Electron app on an arm64 runner
-    # causes native Node modules (e.g. systeminformation) to be compiled for
-    # arm64 only. The x64 slice of the universal binary then contains arm64
-    # .node files, and macOS refuses to launch it on Intel Macs with:
-    #   "You can't open the application because it is not supported on this Mac"
+    # ── RUNNER HISTORY & RATIONALE ────────────────────────────────────────────
     #
-    # FIX: Use macos-13, which is the last Intel (x86_64) GitHub-hosted runner.
-    # electron-builder can correctly cross-compile the arm64 slice from an Intel
-    # host (via Rosetta + LLVM cross toolchain), producing a valid universal
-    # binary that runs natively on BOTH Intel Core i5 and Apple Silicon Macs.
-    runs-on: macos-13
+    # v1 — macos-latest (arm64, broken)
+    #   GitHub migrated macos-latest to Apple Silicon (macos-14/15) in late 2024.
+    #   arch: [x64, arm64] produced two separate DMGs; CI upload glob matched
+    #   neither. Intel Mac users got the arm64 DMG → "not supported on this Mac".
+    #
+    # v2 — macos-13 (Intel x64, RETIRED → infinite queue)
+    #   macos-13 was deprecated Sep 2025 and fully retired Dec 2025.
+    #   Jobs queue forever: "Waiting for a runner to pick up this job..."
+    #   No runner will ever be assigned. DO NOT USE.
+    #
+    # v3 — macos-latest (arm64, CORRECT — current)
+    #   Safe because DriveWatch has ZERO native Node modules (no binding.gyp
+    #   files exist anywhere in node_modules). All dependencies — systeminformation,
+    #   electron-log, pdfkit, recharts — are pure JavaScript/TypeScript.
+    #   electron-builder's universal build downloads pre-built Electron x64 and
+    #   arm64 binaries from GitHub, then merges them with `lipo`. Since there is
+    #   nothing to cross-compile, the runner architecture is irrelevant.
+    #   The resulting DriveWatch.app runs natively on Intel Core i5 AND Apple M.
+    #
+    # ALTERNATIVE: macos-15-intel (Intel x64, available until Aug 2027)
+    #   Use this only if native Node modules are ever added to the project.
+    #   For the current pure-JS stack, macos-latest is simpler and always
+    #   immediately available (no queue delays).
+    runs-on: macos-latest
     permissions:
       contents: write
 
@@ -37,14 +50,14 @@ jobs:
         run: npm install
 
       - name: Build macOS Universal DMG
-        # Produces a single dist/DriveWatch.dmg (universal binary).
-        # arch: universal in electron-builder.yml creates one fat .app containing
-        # both x64 and arm64 slices — no separate per-arch DMGs are generated.
+        # Produces a single dist/DriveWatch.dmg (universal fat binary).
+        # electron-builder downloads pre-built Electron binaries for both x64
+        # and arm64 from GitHub Releases, then merges them with lipo.
+        # arch: universal in electron-builder.yml → single DriveWatch.dmg output.
         run: npm run build:mac-ci
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
-          # Increase heap for large universal binary linking step
           NODE_OPTIONS: --max-old-space-size=4096
 
       - name: Upload Artifacts to GitHub Release
@@ -57,4 +70,3 @@ jobs:
             dist/*.blockmap
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
