@@ -14,6 +14,24 @@ import { validateLhmService, setLhmAlive } from './services/thermalService'
 import { UpdaterService } from './services/updaterService'
 import { RecoveryEngine } from './recoveryEngine'
 import { DeviceEjectService } from './services/deviceEjectService'
+import { runStorageDiagnostics, exportDiagnosticsReport, exportDiagnosticsJson } from './services/storageDiagnostics'
+import { getCpuFanRpm } from './services/fanMonitor'
+import {
+  startSurfaceScan,
+  pauseSurfaceScan,
+  resumeSurfaceScan,
+  stopSurfaceScan,
+  isSurfaceScanActive
+} from './services/scanner/surfaceScanEngine'
+import { findBestScanResult, getAllStoredDiskIndices } from './services/scanner/scanResultStore'
+import {
+  startStabilizer,
+  pauseStabilizer,
+  resumeStabilizer,
+  stopStabilizer,
+  isStabilizerActive
+} from './services/stabilizer/sectorStabilizer'
+import { scanTaskManager } from './services/scanTaskManager'
 
 // Keep DriveWatch from adding its own GPU load while it is measuring GPU load.
 app.disableHardwareAcceleration()
@@ -142,6 +160,10 @@ app.whenReady().then(async () => {
     return app.getVersion()
   })
 
+  ipcMain.handle('get-fan-rpm', async () => {
+    try { return await getCpuFanRpm() } catch { return null }
+  })
+
   ipcMain.handle('get-system-stats', async () => {
     try { return await getSystemStats() } catch { return null }
   })
@@ -260,6 +282,39 @@ app.whenReady().then(async () => {
     return { success: errors.length === 0, deletedCount: count, errors }
   })
 
+  // --- STORAGE HEALTH CENTER IPC ---
+  ipcMain.handle('diagnostics:scan', async (_, forceRefresh?: boolean) => {
+    const taskId = `diagnostics-all-${Date.now()}`
+    scanTaskManager.createTask({
+      taskId,
+      driveId: 'all',
+      diskIndex: null,
+      driveName: 'All Drives',
+      scanType: 'diagnostics',
+      scanMode: 'full'
+    })
+    scanTaskManager.setStatus(taskId, 'running')
+    try {
+      const result = await runStorageDiagnostics(forceRefresh ?? false)
+      scanTaskManager.updateProgress(taskId, { progress: 100 })
+      scanTaskManager.setStatus(taskId, 'done')
+      return result
+    } catch (err: any) {
+      scanTaskManager.setStatus(taskId, 'error', err.message)
+      return { error: err.message, overallScore: 0, overallStatus: 'critical', firmware: [], drivers: [], controllers: [], trimStatus: [], eventLogs: [], recommendations: [], issueCount: { info: 0, low: 0, medium: 0, high: 0, critical: 0 }, timestamp: new Date().toISOString(), platform: process.platform, scanDurationMs: 0 }
+    }
+  })
+
+  ipcMain.handle('diagnostics:export', async () => {
+    try { return await exportDiagnosticsReport() }
+    catch (err: any) { return { success: false, error: err.message } }
+  })
+
+  ipcMain.handle('diagnostics:export-json', async () => {
+    try { return await exportDiagnosticsJson() }
+    catch (err: any) { return { success: false, error: err.message } }
+  })
+
   // --- RECOVERY LAB IPC ---
   ipcMain.on('recovery:start-scan', (_, { drivePath, mode }) => {
     recoveryEngine?.startScan(drivePath, mode)
@@ -360,6 +415,312 @@ app.whenReady().then(async () => {
     } catch (err: any) {
       return { success: false, pools: [], datasets: [], shares: [], disks: [], error: err.message }
     }
+  })
+
+  // NAS live I/O stats via SSH (iostat/diskstats/zpool)
+  ipcMain.handle('nas:io-stats', async (_, config: { host: string; username: string; password: string; port?: number }) => {
+    try {
+      const { executeSSH } = await import('./services/NASSSH/commands')
+      const escapedPw = config.password.replace(/'/g, "'\\''")
+      const sudoCmd = config.username === 'root' ? '' : `echo '${escapedPw}' | sudo -S `
+
+      // Query ALL disk I/O using multiple methods for maximum coverage
+      // 1. zpool iostat for pooled disks
+      // 2. iostat for ALL physical disks (including non-pooled ones like PNY CS900)
+      const [zpoolOut, iostatOut] = await Promise.all([
+        executeSSH(
+          config.host, config.username, config.password,
+          `export PATH=$PATH:/sbin:/usr/sbin:/usr/local/sbin; ${sudoCmd} zpool iostat -v 1 2 2>/dev/null | tail -50`,
+          config.port || 22
+        ).catch(() => ''),
+        executeSSH(
+          config.host, config.username, config.password,
+          `export PATH=$PATH:/sbin:/usr/sbin:/usr/local/sbin; cat /proc/diskstats 2>/dev/null || iostat -dxI 2>/dev/null || ${sudoCmd} iostat -dx 2>/dev/null`,
+          config.port || 22
+        ).catch(() => '')
+      ])
+
+      const disks: { name: string; readSectors: number; writeSectors: number }[] = []
+      const seenDevices = new Set<string>()
+      let format = 'unknown'
+
+      // Parse zpool iostat (pooled disks)
+      if (zpoolOut && (zpoolOut.includes('alloc') || zpoolOut.includes('bandwidth'))) {
+        const lines = zpoolOut.split('\n')
+        let inSecondReport = false
+        let dashCount = 0
+        for (const line of lines) {
+          if (line.includes('---')) { dashCount++; if (dashCount >= 2) inSecondReport = true; continue }
+          if (!inSecondReport) continue
+          // Skip pool-level aggregate lines (not indented with spaces)
+          // Disk lines in zpool iostat -v are indented with 2+ spaces
+          if (!/^\s{2,}/.test(line) && !/^\t/.test(line)) continue
+          const parts = line.trim().split(/\s+/)
+          if (parts.length >= 7 && /^(da|ada|nvme|nvd|sd|mfid|vtbd)/.test(parts[0])) {
+            const parseBW = (s: string): number => {
+              if (!s || s === '0' || s === '-') return 0
+              const m = s.match(/^([\d.]+)([KMG]?)/)
+              if (!m) return 0
+              const num = parseFloat(m[1])
+              if (m[2] === 'K') return num * 1024
+              if (m[2] === 'M') return num * 1024 * 1024
+              if (m[2] === 'G') return num * 1024 * 1024 * 1024
+              return num
+            }
+            const name = parts[0].replace(/[sp]\d+$/, '') // ada0s1 → ada0
+            if (!seenDevices.has(name)) {
+              seenDevices.add(name)
+              const readBps = parseBW(parts[5])
+              const writeBps = parseBW(parts[6])
+              // Sanity clamp: max realistic per-disk throughput is 600 MB/s (NVMe) or 200 MB/s (SATA)
+              const maxBps = 600 * 1024 * 1024
+              disks.push({
+                name,
+                readSectors: Math.round(Math.min(readBps, maxBps) / 512),
+                writeSectors: Math.round(Math.min(writeBps, maxBps) / 512)
+              })
+            }
+          }
+        }
+        if (disks.length > 0) format = 'zpool-rate'
+      }
+
+      // Parse iostat / diskstats for ALL disks (catches non-pooled drives)
+      if (iostatOut) {
+        const lines = iostatOut.split('\n')
+        const isLinux = lines.some(l => /^\s*\d+\s+\d+\s+(sd|nvme|vd)/.test(l))
+
+        if (isLinux) {
+          for (const line of lines) {
+            const parts = line.trim().split(/\s+/)
+            if (parts.length >= 10 && /^(sd|da|ada|nvme|md|vd|xvd)/.test(parts[2])) {
+              if (/\d+$/.test(parts[2]) && !/^(md\d+|nvme\d+n\d+)$/.test(parts[2])) continue
+              if (!seenDevices.has(parts[2])) {
+                seenDevices.add(parts[2])
+                disks.push({ name: parts[2], readSectors: parseInt(parts[5]) || 0, writeSectors: parseInt(parts[9]) || 0 })
+              }
+            }
+          }
+          if (format === 'unknown') format = 'linux'
+        } else {
+          // FreeBSD iostat -dxI or iostat -dx
+          for (const line of lines) {
+            const parts = line.trim().split(/\s+/)
+            if (parts.length >= 5 && /^(da|ada|nvme|nvd|md|vtbd|mfid)/.test(parts[0])) {
+              const name = parts[0]
+              if (!seenDevices.has(name)) {
+                seenDevices.add(name)
+                // iostat -dxI: device r/s w/s kr/s kw/s
+                const readKB = parseFloat(parts[3]) || parseFloat(parts[1]) || 0
+                const writeKB = parseFloat(parts[4]) || parseFloat(parts[2]) || 0
+                disks.push({ name, readSectors: Math.round(readKB * 2), writeSectors: Math.round(writeKB * 2) })
+              }
+            }
+          }
+          if (format === 'unknown' && disks.length > 0) format = 'freebsd-iostat'
+        }
+      }
+
+      // Combine: if zpool gave rates and iostat also gave rates, mark as rate-based
+      if (format === 'zpool-rate' || format === 'freebsd-iostat') format = 'zpool-rate'
+
+      console.log(`[NAS IO] Fetched ${disks.length} disks (format=${format}): ${disks.map(d => `${d.name}:r=${d.readSectors},w=${d.writeSectors}`).join(', ')}`)
+
+      return { success: true, disks, timestamp: Date.now(), format }
+    } catch (err: any) {
+      return { success: false, disks: [], timestamp: Date.now(), error: err.message }
+    }
+  })
+
+  // ── SURFACE SCAN IPC ──────────────────────────────────────────────────────
+  // All operations are safe, READ-ONLY, and additive to the existing codebase.
+
+  ipcMain.on('surface:start', (event, diskIndex: number, mode: string, model?: string, serial?: string, devicePath?: string, executionMode?: string) => {
+    console.log(`[SurfaceScan] Starting ${mode} scan on disk ${diskIndex} | executionMode="${executionMode ?? 'REAL_SCAN'}" model="${model ?? ''}" serial="${serial ?? ''}" device="${devicePath ?? `\\\\.\\PhysicalDrive${diskIndex}`}"`)
+
+    // Register background task
+    const taskId = `surface-${diskIndex}-${Date.now()}`
+    const task = scanTaskManager.createTask({
+      taskId,
+      driveId: `disk_${diskIndex}`,
+      diskIndex,
+      driveName: model || `Disk ${diskIndex}`,
+      scanType: 'surface',
+      scanMode: mode
+    })
+    scanTaskManager.setStatus(taskId, 'running')
+
+    startSurfaceScan(
+      diskIndex,
+      mode as any,
+      {
+        onProgress: (p) => {
+          event.sender.send('surface:progress', p)
+          scanTaskManager.updateProgress(taskId, {
+            progress: p.percent,
+            speedMBs: p.readSpeedMBs,
+            etaSec: p.etaSec,
+            telemetry: {
+              currentLba: p.currentLba,
+              totalLbas: p.totalLbas,
+              errorCount: p.errorCount,
+              slowCount: p.slowCount,
+              temperature: p.temperature,
+              healthPct: p.healthPct,
+              executionMode: p.executionMode
+            }
+          })
+        },
+        onDone: (r) => {
+          event.sender.send('surface:done', r)
+          scanTaskManager.updateProgress(taskId, { progress: 100 })
+          scanTaskManager.setStatus(taskId, r.cancelled ? 'cancelled' : 'done')
+        },
+        onError: (msg) => {
+          event.sender.send('surface:error', msg)
+          scanTaskManager.setStatus(taskId, 'error', msg)
+        }
+      },
+      model ?? '',
+      serial ?? '',
+      devicePath ?? '',
+      executionMode === 'SIMULATION_MODE' ? 'SIMULATION_MODE' : 'REAL_SCAN'
+    ).catch((err) => {
+      console.error('[SurfaceScan] Fatal:', err)
+      event.sender.send('surface:error', err?.message ?? 'Unknown error')
+      scanTaskManager.setStatus(taskId, 'error', err?.message ?? 'Unknown error')
+    })
+  })
+
+  ipcMain.on('surface:pause', (_, diskIndex: number) => {
+    pauseSurfaceScan(diskIndex)
+    // Find the running surface task for this disk and mark paused
+    const task = scanTaskManager.getAllTasks().find(
+      t => t.scanType === 'surface' && t.diskIndex === diskIndex && t.status === 'running'
+    )
+    if (task) scanTaskManager.setStatus(task.taskId, 'paused')
+  })
+
+  ipcMain.on('surface:resume', (_, diskIndex: number) => {
+    resumeSurfaceScan(diskIndex)
+    const task = scanTaskManager.getAllTasks().find(
+      t => t.scanType === 'surface' && t.diskIndex === diskIndex && t.status === 'paused'
+    )
+    if (task) scanTaskManager.setStatus(task.taskId, 'running')
+  })
+
+  ipcMain.on('surface:stop', (_, diskIndex: number) => {
+    stopSurfaceScan(diskIndex)
+    const task = scanTaskManager.getAllTasks().find(
+      t => t.scanType === 'surface' && t.diskIndex === diskIndex && (t.status === 'running' || t.status === 'paused')
+    )
+    if (task) scanTaskManager.setStatus(task.taskId, 'cancelled')
+  })
+
+  ipcMain.handle('surface:is-active', (_, diskIndex: number) => {
+    return isSurfaceScanActive(diskIndex)
+  })
+  
+  ipcMain.handle('surface:get-last-result', (_, diskIndex: number, model?: string, serial?: string, devicePath?: string) => {
+    const allIndices: number[] = getAllStoredDiskIndices()
+    console.log(`[ScanStore] 🔍 IPC get-last-result: diskIndex=${diskIndex}, model="${model ?? ''}", serial="${serial ?? ''}", storedKeys=[${allIndices.join(', ')}]`)
+
+    // Use full multi-stage lookup (serial -> model -> devicePath -> partial model).
+    const result = findBestScanResult(diskIndex, model, serial, devicePath)
+
+    if (result) {
+      console.log(`[ScanStore] ✅ IPC result found: storedDiskIndex=${result.diskIndex}, slowCount=${result.slowCount}, errorCount=${result.errorCount}`)
+      return result
+    }
+
+    console.warn(`[ScanStore] ❌ IPC: No scan result found for diskIndex=${diskIndex}. Run Surface Scan first.`)
+    return null
+  })
+
+  // ── SECTOR STABILIZER IPC ──────────────────────────────────────────────────
+  ipcMain.on('stabilizer:start', (event, diskIndex: number, mode: string) => {
+    console.log(`[Stabilizer] Starting ${mode} on disk ${diskIndex}`)
+
+    const taskId = `stabilizer-${diskIndex}-${Date.now()}`
+    scanTaskManager.createTask({
+      taskId,
+      driveId: `disk_${diskIndex}`,
+      diskIndex,
+      driveName: `Disk ${diskIndex}`,
+      scanType: 'stabilizer',
+      scanMode: mode
+    })
+    scanTaskManager.setStatus(taskId, 'running')
+
+    startStabilizer(diskIndex, mode as any, {
+      onProgress: (p) => {
+        event.sender.send('stabilizer:progress', p)
+        scanTaskManager.updateProgress(taskId, {
+          progress: p.percent,
+          speedMBs: p.speedMBs,
+          etaSec: p.etaSec,
+          telemetry: {
+            phase: p.phase,
+            stableSectors: p.stableSectors,
+            weakSectors: p.weakSectors,
+            unstableSectors: p.unstableSectors,
+            unreadableSectors: p.unreadableSectors,
+            remappedSectors: p.remappedSectors,
+            temperature: p.temperature
+          }
+        })
+      },
+      onDone: (r) => {
+        event.sender.send('stabilizer:done', r)
+        scanTaskManager.updateProgress(taskId, { progress: 100 })
+        scanTaskManager.setStatus(taskId, r.cancelled ? 'cancelled' : 'done')
+      },
+      onError: (msg) => {
+        event.sender.send('stabilizer:error', msg)
+        scanTaskManager.setStatus(taskId, 'error', msg)
+      }
+    }).catch((err) => {
+      event.sender.send('stabilizer:error', err?.message ?? 'Unknown error')
+      scanTaskManager.setStatus(taskId, 'error', err?.message ?? 'Unknown error')
+    })
+  })
+
+  ipcMain.on('stabilizer:pause', (_, diskIndex: number) => {
+    pauseStabilizer(diskIndex)
+    const task = scanTaskManager.getAllTasks().find(
+      t => t.scanType === 'stabilizer' && t.diskIndex === diskIndex && t.status === 'running'
+    )
+    if (task) scanTaskManager.setStatus(task.taskId, 'paused')
+  })
+
+  ipcMain.on('stabilizer:resume', (_, diskIndex: number) => {
+    resumeStabilizer(diskIndex)
+    const task = scanTaskManager.getAllTasks().find(
+      t => t.scanType === 'stabilizer' && t.diskIndex === diskIndex && t.status === 'paused'
+    )
+    if (task) scanTaskManager.setStatus(task.taskId, 'running')
+  })
+
+  ipcMain.on('stabilizer:stop', (_, diskIndex: number) => {
+    stopStabilizer(diskIndex)
+    const task = scanTaskManager.getAllTasks().find(
+      t => t.scanType === 'stabilizer' && t.diskIndex === diskIndex && (t.status === 'running' || t.status === 'paused')
+    )
+    if (task) scanTaskManager.setStatus(task.taskId, 'cancelled')
+  })
+
+  ipcMain.handle('stabilizer:is-active', (_, diskIndex: number) => isStabilizerActive(diskIndex))
+
+  // ── TASK REGISTRY IPC ──────────────────────────────────────────────────────
+  // Renderer can request a full snapshot at any time (e.g. after navigation)
+  ipcMain.handle('tasks:get-all', () => scanTaskManager.getAllTasks())
+  ipcMain.handle('tasks:get-active', () => scanTaskManager.getActiveTasks())
+  ipcMain.on('tasks:request-snapshot', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (win) scanTaskManager.sendSnapshotTo(win)
+  })
+  ipcMain.on('tasks:remove', (_, taskId: string) => {
+    scanTaskManager.removeTask(taskId)
   })
 
   const mainWindow = createWindow()

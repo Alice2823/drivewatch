@@ -158,6 +158,18 @@ export const NASStoragePanel: React.FC<Props> = ({ storage, smart, health }) => 
                     </div>
                   </div>
 
+                  {/* Capacity */}
+                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/5">
+                    <span className="text-[9px] font-black text-muted uppercase tracking-widest">Capacity</span>
+                    <span className="text-[13px] font-black text-primary tracking-tight">
+                      {disk.capacity > 0
+                        ? (disk.capacity >= 1000 * 1024 * 1024 * 1024
+                          ? `${(disk.capacity / (1024 * 1024 * 1024 * 1024)).toFixed(1)} TB`
+                          : `${Math.round(disk.capacity / (1024 * 1024 * 1024))} GB`)
+                        : 'Unknown'}
+                    </span>
+                  </div>
+
                   {/* Warnings */}
                   {disk.reallocatedSectors > 0 && (
                     <div className="flex flex-col gap-2 mt-2 pt-2 border-t border-white/5">
@@ -174,19 +186,32 @@ export const NASStoragePanel: React.FC<Props> = ({ storage, smart, health }) => 
                       <div className="flex items-center justify-between">
                         <span className="text-[9px] font-black text-muted uppercase tracking-widest">Throughput (Live)</span>
                         <div className="flex gap-3 text-[9px] font-black uppercase">
-                          <span className="text-primary">R: {formatNASBytes(disk.readSpeed || 0)}/s</span>
-                          <span className="text-warning">W: {formatNASBytes(disk.writeSpeed || 0)}/s</span>
+                          <span className="text-primary">R: {(disk.readSpeed && disk.readSpeed > 0) ? formatNASBytes(disk.readSpeed) + '/s' : 'Idle'}</span>
+                          <span className="text-warning">W: {(disk.writeSpeed && disk.writeSpeed > 0) ? formatNASBytes(disk.writeSpeed) + '/s' : 'Idle'}</span>
                         </div>
                       </div>
-                      <div className="h-8 w-full bg-black/20 rounded-md overflow-hidden relative">
-                        {/* Read Sparkline */}
-                        <div className="absolute inset-0">
-                          <Sparkline data={disk.throughputHistory.map(p => p.download)} color="#06b6d4" opacity={0.6} />
+                      <div className="h-14 w-full bg-black/20 rounded-md overflow-hidden relative" style={{ minHeight: 56 }}>
+                        <DualSparkline
+                          readData={disk.throughputHistory.map(p => p.download)}
+                          writeData={disk.throughputHistory.map(p => p.upload)}
+                          readColor="#06b6d4"
+                          writeColor="#f59e0b"
+                        />
+                      </div>
+                    </div>
+                  )}
+                  {/* Show graph placeholder when no history yet */}
+                  {(!disk.throughputHistory || disk.throughputHistory.length === 0) && (
+                    <div className="flex flex-col gap-2 mt-2 pt-3 border-t border-white/5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] font-black text-muted uppercase tracking-widest">Throughput (Live)</span>
+                        <div className="flex gap-3 text-[9px] font-black uppercase">
+                          <span className="text-primary">R: Idle</span>
+                          <span className="text-warning">W: Idle</span>
                         </div>
-                        {/* Write Sparkline */}
-                        <div className="absolute inset-0">
-                          <Sparkline data={disk.throughputHistory.map(p => p.upload)} color="#f59e0b" opacity={0.6} />
-                        </div>
+                      </div>
+                      <div className="h-14 w-full bg-black/20 rounded-md flex items-center justify-center" style={{ minHeight: 56 }}>
+                        <span className="text-[9px] font-bold text-muted/30 uppercase tracking-widest">Waiting for data...</span>
                       </div>
                     </div>
                   )}
@@ -239,14 +264,123 @@ export const NASStoragePanel: React.FC<Props> = ({ storage, smart, health }) => 
 
 function Sparkline({ data, color, opacity = 1 }: { data: number[], color: string, opacity?: number }) {
   if (!data || data.length < 2) return null
-  // Increase max floor slightly to prevent giant spikes on tiny writes
-  const max = Math.max(...data, 1024 * 1024) 
+  const allZero = data.every(d => d === 0)
+  // Detect idle ambient mode: all values below 8KB (visual-only breathing)
+  const isIdleAmbient = !allZero && data.every(d => d < 8192)
+  
+  // Dynamic scaling: use actual data range for maximum visual impact
+  const dataMax = Math.max(...data)
+  const dataMin = Math.min(...data.filter(d => d > 0))
+  
+  let max: number
+  let min: number
+  if (allZero) {
+    max = 1; min = 0
+  } else if (isIdleAmbient) {
+    // Idle ambient: force wide vertical range for visible waveform
+    // Map values to use full 30-70% of graph height
+    const center = (dataMax + dataMin) / 2
+    const spread = Math.max(dataMax - dataMin, center * 0.5, 100)
+    min = center - spread * 1.5
+    max = center + spread * 1.5
+  } else if (dataMax > 0 && dataMin > 0 && dataMax / dataMin < 3) {
+    min = dataMin * 0.5
+    max = dataMax * 1.5
+  } else {
+    min = 0
+    max = dataMax * 1.2 || 1024
+  }
+
+  const range = max - min || 1
   const width = 100
-  const height = 100
-  const points = data.map((d, i) => `${(i / (data.length - 1)) * width},${100 - (d / max) * height}`).join(' ')
+  const points = data.map((d, i) => {
+    const x = (i / (data.length - 1)) * width
+    const normalized = allZero ? 0.15 : Math.max(0.05, Math.min(0.95, (d - min) / range))
+    const y = 95 - normalized * 85
+    return `${x},${y}`
+  }).join(' ')
+
+  // Idle ambient: 65% opacity with glow; Active: full opacity
+  const finalOpacity = allZero ? 0.2 : isIdleAmbient ? 0.65 : opacity
+  const strokeW = allZero ? '1' : isIdleAmbient ? '2.5' : '2.5'
+
+  return (
+    <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 100 100" style={{ opacity: finalOpacity }}>
+      {isIdleAmbient && (
+        <defs>
+          <filter id={`glow-${color.replace('#', '')}`}>
+            <feGaussianBlur stdDeviation="2" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+      )}
+      <polyline
+        points={points}
+        fill="none"
+        stroke={color}
+        strokeWidth={strokeW}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        filter={isIdleAmbient ? `url(#glow-${color.replace('#', '')})` : undefined}
+      />
+    </svg>
+  )
+}
+
+/** Dual-channel sparkline: renders read + write on SHARED Y-axis so separation is preserved */
+function DualSparkline({ readData, writeData, readColor, writeColor }: {
+  readData: number[]; writeData: number[]; readColor: string; writeColor: string
+}) {
+  if (!readData || readData.length < 2) return null
+
+  // Shared Y-axis: use combined min/max so both lines maintain relative position
+  const allValues = [...readData, ...writeData]
+  const globalMax = Math.max(...allValues)
+  const globalMin = Math.min(...allValues.filter(v => v > 0))
+  const allZero = allValues.every(v => v === 0)
+  const isIdle = !allZero && globalMax < 8192
+
+  let min: number
+  let max: number
+  if (allZero) {
+    min = 0; max = 1
+  } else {
+    // Use global range with padding — this preserves the gap between channels
+    const range = globalMax - globalMin
+    min = Math.max(0, globalMin - range * 0.2)
+    max = globalMax + range * 0.2
+  }
+
+  const rangeVal = max - min || 1
+  const width = 100
+
+  const toPoints = (data: number[]) => data.map((d, i) => {
+    const x = (i / (data.length - 1)) * width
+    const normalized = allZero ? 0.5 : Math.max(0.02, Math.min(0.98, (d - min) / rangeVal))
+    const y = 96 - normalized * 92
+    return `${x},${y}`
+  }).join(' ')
+
+  const readPoints = toPoints(readData)
+  const writePoints = toPoints(writeData)
+  const opacity = allZero ? 0.2 : isIdle ? 0.7 : 0.8
+  const strokeW = isIdle ? '2.2' : '2.5'
+
   return (
     <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 100 100" style={{ opacity }}>
-      <polyline points={points} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      {isIdle && (
+        <defs>
+          <filter id="idle-glow-r"><feGaussianBlur stdDeviation="1.5" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+          <filter id="idle-glow-w"><feGaussianBlur stdDeviation="1.5" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+        </defs>
+      )}
+      <polyline points={readPoints} fill="none" stroke={readColor} strokeWidth={strokeW}
+        strokeLinecap="round" strokeLinejoin="round" filter={isIdle ? 'url(#idle-glow-r)' : undefined} />
+      <polyline points={writePoints} fill="none" stroke={writeColor} strokeWidth={strokeW}
+        strokeLinecap="round" strokeLinejoin="round" filter={isIdle ? 'url(#idle-glow-w)' : undefined} />
     </svg>
   )
 }

@@ -13,15 +13,31 @@ export const NASTransferMonitor: React.FC<Props> = ({ stats }) => {
     if (!stats.history || stats.history.length === 0) {
       return Array(60).fill(0).map(() => ({ upload: 0, download: 0 }))
     }
+    // Auto-detect best unit: if max < 1 MB/s, use KB/s scale
+    const maxBytes = Math.max(...stats.history.map(p => Math.max(p.upload, p.download)), 1)
+    const useKB = maxBytes < 512 * 1024 // Below 512 KB/s → use KB/s scale
+    const divisor = useKB ? 1024 : (1024 * 1024)
     return stats.history.map(p => ({
-      upload: p.upload / (1024 * 1024),
-      download: p.download / (1024 * 1024)
+      upload: p.upload / divisor,
+      download: p.download / divisor
     }))
   }, [stats.history])
 
+  // Determine display unit
+  const displayUnit = useMemo(() => {
+    if (!stats.history || stats.history.length === 0) return 'KB/s'
+    const maxBytes = Math.max(...stats.history.map(p => Math.max(p.upload, p.download)), 1)
+    return maxBytes < 512 * 1024 ? 'KB/s' : 'MB/s'
+  }, [stats.history])
+
   const maxY = useMemo(() => {
-    const max = Math.max(...chartData.map(d => Math.max(d.upload, d.download)), 1)
-    return Math.ceil(max / 10) * 10 + 10
+    const max = Math.max(...chartData.map(d => Math.max(d.upload, d.download)), 0.1)
+    // Round up to a nice number with 20% headroom
+    const headroom = max * 1.3
+    if (headroom < 1) return 1
+    if (headroom < 10) return Math.ceil(headroom)
+    if (headroom < 100) return Math.ceil(headroom / 10) * 10
+    return Math.ceil(headroom / 50) * 50
   }, [chartData])
 
   const qualityColorClass = getConnectionQualityColor(stats.connectionQuality)
@@ -96,11 +112,11 @@ export const NASTransferMonitor: React.FC<Props> = ({ stats }) => {
       <div className="flex items-center justify-center gap-6 mt-3">
         <div className="flex items-center gap-2">
           <div className="w-3 h-1 rounded-full bg-success" />
-          <span className="text-[9px] font-black text-muted uppercase tracking-widest">Upload (MB/s)</span>
+          <span className="text-[9px] font-black text-muted uppercase tracking-widest">Upload ({displayUnit})</span>
         </div>
         <div className="flex items-center gap-2">
           <div className="w-3 h-1 rounded-full bg-primary" />
-          <span className="text-[9px] font-black text-muted uppercase tracking-widest">Download (MB/s)</span>
+          <span className="text-[9px] font-black text-muted uppercase tracking-widest">Download ({displayUnit})</span>
         </div>
       </div>
 

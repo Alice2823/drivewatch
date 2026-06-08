@@ -1,0 +1,61 @@
+const { PowerShellHost } = require('./temp_ps/psHost.js');
+
+function buildStabilizerReadScript(diskIndex, lba, retries) {
+  return `
+$ErrorActionPreference = 'Stop'
+try {
+  if (-not ([System.Management.Automation.PSTypeName]'DRWReader').Type) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public class DRWReader {
+  [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Auto)]
+  public static extern IntPtr CreateFile(string lpFileName, uint dwAccess, uint dwShare, IntPtr sec, uint dwCreate, uint dwFlags, IntPtr hTemplate);
+  [DllImport("kernel32.dll", SetLastError=true)]
+  public static extern bool ReadFile(IntPtr hFile, byte[] buf, uint nRead, ref uint read, IntPtr ovr);
+  [DllImport("kernel32.dll", SetLastError=true)]
+  public static extern bool CloseHandle(IntPtr h);
+  [DllImport("kernel32.dll")]
+  public static extern bool SetFilePointerEx(IntPtr hFile, long dist, IntPtr newPos, uint method);
+}
+'@
+  }
+} catch {}
+try {
+  $path = "\\\\.\\PhysicalDrive${diskIndex}"
+  $h = [DRWReader]::CreateFile($path,[uint32]0x80000000L,3,[IntPtr]::Zero,3,0,[IntPtr]::Zero)
+  if ($h -eq [IntPtr](-1) -or $h -eq [IntPtr]::Zero) {
+    Write-Output '{"ok":false,"ms":0,"retries":${retries},"err":"access_denied"}'
+    return
+  }
+  $offset = [long]${lba} * 512L
+  [void][DRWReader]::SetFilePointerEx($h, $offset, [IntPtr]::Zero, 0)
+  $buf = New-Object byte[] (64 * 512)
+  $read = [uint32]0
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
+  $ok = [DRWReader]::ReadFile($h, $buf, [uint32]$buf.Length, [ref]$read, [IntPtr]::Zero)
+  $sw.Stop()
+  [void][DRWReader]::CloseHandle($h)
+  Write-Output "{\"ok\":$($ok.ToString().ToLower()),\"ms\":$($sw.ElapsedMilliseconds),\"retries\":${retries},\"read\":$read}"
+} catch {
+  Write-Output "{\"ok\":false,\"ms\":0,\"retries\":${retries},\"err\":\"exception\"}"
+}
+`
+}
+
+async function run() {
+  const ps = PowerShellHost.getInstance('test');
+  const script = buildStabilizerReadScript(1, 0, 0);
+  const out = await ps.execute(script, 10000);
+  console.log('OUTPUT START');
+  console.log(out);
+  console.log('OUTPUT END');
+  try {
+    JSON.parse(out.trim());
+    console.log('JSON PARSE OK');
+  } catch (e) {
+    console.log('JSON ERR:', e.message);
+  }
+  process.exit(0);
+}
+run();

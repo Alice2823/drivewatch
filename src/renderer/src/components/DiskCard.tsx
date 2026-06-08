@@ -214,6 +214,16 @@ export const DiskCard: React.FC<DiskCardProps> = React.memo(({ data }) => {
 
       {/* ── MIDDLE: Capacity Section ── */}
       <div className="flex flex-col gap-1.5 relative z-10">
+        {/* Drive Capacity Badge */}
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[10px] font-black text-muted/60 uppercase tracking-[0.2em]">Capacity</span>
+          <span className="text-[16px] font-black text-primary tabular-nums tracking-tight">
+            {data.size > 0 ? (data.size >= 1000 * 1024 * 1024 * 1024
+              ? `${(data.size / (1024 * 1024 * 1024 * 1024)).toFixed(1)} TB`
+              : `${Math.round(data.size / (1024 * 1024 * 1024))} GB`)
+              : 'Unknown'}
+          </span>
+        </div>
         <div className="flex justify-between items-end mb-1">
           <span className="text-[11px] font-black text-muted uppercase tracking-[0.2em]">Storage Capacity</span>
           <span className="text-[14px] font-black text-foreground">{usagePercent}% <span className="text-[10px] text-muted font-bold ml-0.5">USED</span></span>

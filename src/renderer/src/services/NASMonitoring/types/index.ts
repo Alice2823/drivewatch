@@ -19,7 +19,7 @@ export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'fai
 export type HealthLevel = 'healthy' | 'warning' | 'critical' | 'unknown'
 
 /** RAID types */
-export type RAIDType = 'RAID0' | 'RAID1' | 'RAID5' | 'RAID6' | 'RAID10' | 'RAIDZ1' | 'RAIDZ2' | 'RAIDZ3' | 'JBOD' | 'Mirror' | 'Stripe' | 'Unknown'
+export type RAIDType = 'RAID0' | 'RAID1' | 'RAID5' | 'RAID6' | 'RAID10' | 'RAIDZ1' | 'RAIDZ2' | 'RAIDZ3' | 'JBOD' | 'Mirror' | 'Stripe' | 'Single Disk' | 'Multiple Volumes' | 'Unknown'
 
 // ============================================
 // Device Discovery

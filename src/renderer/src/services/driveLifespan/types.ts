@@ -46,4 +46,7 @@ export interface LifespanEngineInput {
   powerOnHours: number | null
   model: string
   type: 'SSD' | 'HDD'
+  smartAvailable?: boolean
+  smartUnsupported?: boolean
+  surfaceScanResult?: any | null
 }

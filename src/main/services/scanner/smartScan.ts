@@ -4,6 +4,10 @@ import path from 'path'
 import { existsSync } from 'fs'
 import { PowerShellHost } from '../psHost'
 import { getDiskData } from '../diskService'
+import { parseSmartOverallHealth } from './smartHealthParser'
+import { parseNvmeSmart } from './nvmeSmartParser'
+import { mapNvmeToSmartAttributes } from './smartAttributeMapper'
+
 
 const execFileAsync = promisify(execFile)
 
@@ -53,7 +57,7 @@ async function findSmartctl(): Promise<string | null> {
   }
 
   resolvedSmartctl = null
-  console.warn('[SmartScan] smartctl not found → fallback mode')
+  console.warn('[SmartScan] smartctl not found; SMART may be unsupported on this device')
   return null
 }
 
@@ -64,22 +68,56 @@ async function findSmartctl(): Promise<string | null> {
 export interface SmartResult {
   available: boolean
   fallback: boolean
-  overallHealth: 'PASSED' | 'FAILED' | 'Unknown'
+  overallHealth: 'PASSED' | 'FAILED' | 'Unknown' | 'Unsupported'
   temperature: number | null
   powerOnHours: number | null
   attributes: any[]
   issues: string[]
   error?: string
+  unsupported?: boolean
+  stale?: boolean
+  cachedAt?: number
+  partialSMARTSupport?: boolean
+  bridgeType?: string
 }
 
-const DEFAULT_FALLBACK: SmartResult = {
+const DEFAULT_UNSUPPORTED: SmartResult = {
   available: false,
   fallback: true,
-  overallHealth: 'Unknown',
+  overallHealth: 'Unsupported',
   temperature: null,
   powerOnHours: null,
   attributes: [],
-  issues: []
+  issues: [],
+  unsupported: true
+}
+
+const SMART_CACHE_TTL_MS = 5 * 60 * 1000
+const smartCache = new Map<number, { result: SmartResult; timestamp: number }>()
+
+function cacheSmartResult(diskIndex: number, result: SmartResult): SmartResult {
+  if (result.available && !result.unsupported && (result.attributes?.length ?? 0) > 0) {
+    smartCache.set(diskIndex, {
+      result: { ...result, stale: false, cachedAt: Date.now() },
+      timestamp: Date.now()
+    })
+  }
+  return result
+}
+
+function cachedOrUnsupported(diskIndex: number, result: SmartResult): SmartResult {
+  const cached = smartCache.get(diskIndex)
+  if (cached && Date.now() - cached.timestamp <= SMART_CACHE_TTL_MS) {
+    return {
+      ...cached.result,
+      fallback: true,
+      stale: true,
+      cachedAt: cached.timestamp,
+      error: result.error ?? 'SMART temporarily unavailable; using cached telemetry'
+    }
+  }
+
+  return result
 }
 
 // ─────────────────────────────────────────────
@@ -157,17 +195,12 @@ async function runSmartctl(smartctlPath: string, diskIndex: number): Promise<Sma
       console.log("[SmartScan PARSED]", JSON.stringify(data).substring(0, 500) + "...")
     } catch {
       return {
-        ...DEFAULT_FALLBACK,
+        ...DEFAULT_UNSUPPORTED,
         error: 'Invalid JSON from smartctl'
       }
     }
 
-    const overallHealth =
-      data?.smart_status?.passed === true
-        ? 'PASSED'
-        : data?.smart_status?.passed === false
-        ? 'FAILED'
-        : 'Unknown'
+    const overallHealth = parseSmartOverallHealth(data)
 
     const temperature =
       data?.temperature?.current ??
@@ -210,37 +243,22 @@ async function runSmartctl(smartctlPath: string, diskIndex: number): Promise<Sma
       }
     }
 
-    // 2. Map NVMe Attributes and Extrapolate Fallbacks
-    const nvme = data?.nvme_smart_health_information_log
-    if (nvme) {
-      if (nvme.percentage_used !== undefined && wear === null) {
-        wear = Math.max(0, 100 - nvme.percentage_used)
+    // 2. Map NVMe Attributes and Extrapolate Fallbacks using new parsed modules
+    const nvmeParsed = parseNvmeSmart(data)
+    if (nvmeParsed) {
+      if (nvmeParsed.percentageUsed !== undefined && wear === null) {
+        wear = Math.max(0, 100 - nvmeParsed.percentageUsed)
       }
-      if (nvme.media_errors !== undefined) {
-        reallocated = Math.max(reallocated, nvme.media_errors)
+      if (nvmeParsed.mediaErrors !== undefined) {
+        reallocated = Math.max(reallocated, nvmeParsed.mediaErrors)
       }
 
       // If no ATA table existed, populate NVMe stats as attributes so the UI table has data
       if (attributes.length === 0) {
-        const addAttr = (id: number, name: string, raw: number) => {
-          attributes.push({
-            id, name, value: 100, worst: 100, thresh: 0, raw, failed: false, critical: false
-          })
-        }
-        if (nvme.critical_warning !== undefined) addAttr(1, 'Critical_Warning', nvme.critical_warning)
-        if (nvme.temperature !== undefined) addAttr(2, 'Temperature_Celsius', nvme.temperature)
-        if (nvme.available_spare !== undefined) addAttr(3, 'Available_Spare_%', nvme.available_spare)
-        if (nvme.percentage_used !== undefined) addAttr(4, 'Percentage_Used_%', nvme.percentage_used)
-        if (nvme.media_errors !== undefined) addAttr(5, 'Media_Errors', nvme.media_errors)
-        if (nvme.data_units_read !== undefined) addAttr(6, 'Data_Units_Read', nvme.data_units_read)
-        if (nvme.data_units_written !== undefined) addAttr(7, 'Data_Units_Written', nvme.data_units_written)
-        if (nvme.power_cycles !== undefined) addAttr(8, 'Power_Cycles', nvme.power_cycles)
-        if (nvme.power_on_hours !== undefined) addAttr(9, 'Power_On_Hours', nvme.power_on_hours)
-        if (nvme.unsafe_shutdowns !== undefined) addAttr(10, 'Unsafe_Shutdowns', nvme.unsafe_shutdowns)
+        const nvmeMapped = mapNvmeToSmartAttributes(nvmeParsed)
+        attributes.push(...nvmeMapped)
       }
     }
-
-
 
     if (reallocated > 0) {
       issues.push(`Bad sectors detected (${reallocated})`)
@@ -261,6 +279,9 @@ async function runSmartctl(smartctlPath: string, diskIndex: number): Promise<Sma
     return {
       available: true,
       fallback: false,
+      unsupported: false,
+      stale: false,
+      cachedAt: Date.now(),
       overallHealth,
       temperature: typeof temperature === 'number' && temperature >= 1 && temperature <= 120 ? temperature : null,
       powerOnHours,
@@ -271,7 +292,7 @@ async function runSmartctl(smartctlPath: string, diskIndex: number): Promise<Sma
     console.error('[SmartScan Error]', err)
 
     return {
-      ...DEFAULT_FALLBACK,
+      ...DEFAULT_UNSUPPORTED,
       error: err.message
     }
   }
@@ -284,7 +305,7 @@ async function runSmartctl(smartctlPath: string, diskIndex: number): Promise<Sma
 async function runWmiFallback(diskIndex: number): Promise<SmartResult> {
   if (process.platform !== 'win32') {
     return {
-      ...DEFAULT_FALLBACK,
+      ...DEFAULT_UNSUPPORTED,
       error: 'WMI fallback only available on Windows'
     }
   }
@@ -297,7 +318,8 @@ Where-Object { $_.InstanceName -match "Disk${diskIndex}" } |
 Select-Object -First 1
 
 $result = @{
-  PredictFailure = if ($fail) { $fail.PredictFailure } else { $false }
+  HasStatus = if ($fail) { $true } else { $false }
+  PredictFailure = if ($fail) { $fail.PredictFailure } else { $null }
 }
 
 $result | ConvertTo-Json -Compress
@@ -313,13 +335,22 @@ $result | ConvertTo-Json -Compress
       data = {}
     }
 
+    if (!data?.HasStatus) {
+      return {
+        ...DEFAULT_UNSUPPORTED,
+        error: 'SMART unsupported or blocked by device bridge'
+      }
+    }
+
     return {
-      ...DEFAULT_FALLBACK,
+      ...DEFAULT_UNSUPPORTED,
+      available: true,
+      unsupported: false,
       overallHealth: data?.PredictFailure ? 'FAILED' : 'Unknown',
     }
   } catch {
     return {
-      ...DEFAULT_FALLBACK,
+      ...DEFAULT_UNSUPPORTED,
       error: 'WMI fallback failed'
     }
   }
@@ -330,12 +361,51 @@ $result | ConvertTo-Json -Compress
 // ─────────────────────────────────────────────
 
 export async function runSmartScan(diskIndex: number): Promise<SmartResult> {
+  console.log(`[SMART_FETCH] Initiating SMART scan for diskIndex=${diskIndex}`)
+  const allDisks = await getDiskData()
+  const disk = allDisks.find(d => d.diskIndex === diskIndex) ?? null
+  const model = disk?.name || ''
+  
+  let isUsbBridge = false
+  let bridgeType = ''
+  
+  if (model.match(/RTL9201R|JMS578|ASMedia|SAT|USB-SCSI|SCSI Disk Device/i)) {
+    isUsbBridge = true
+    bridgeType = model
+    console.log(`[USB_BRIDGE_DETECTED] Identified USB-SCSI/SAT bridge device: ${bridgeType}`)
+  }
+
   const smartctl = await findSmartctl()
+  let finalResult: SmartResult | null = null
 
   if (smartctl) {
     const result = await runSmartctl(smartctl, diskIndex)
-    if (result.available) return result
+    if (result.available && !result.unsupported && (result.attributes?.length ?? 0) > 0) {
+      console.log(`[SMART_PARSE] Successfully parsed smartctl attributes`)
+      finalResult = cacheSmartResult(diskIndex, result)
+    }
   }
 
-  return runWmiFallback(diskIndex)
+  if (!finalResult) {
+    const fallbackResult = await runWmiFallback(diskIndex)
+    if (fallbackResult.available && !fallbackResult.unsupported) {
+      console.log(`[SMART_PARSE] Successfully parsed WMI fallback attributes`)
+      finalResult = cacheSmartResult(diskIndex, fallbackResult)
+    } else {
+      console.log(`[SMART_UNSUPPORTED] SMART telemetry unavailable or blocked`)
+      finalResult = cachedOrUnsupported(diskIndex, fallbackResult)
+    }
+  }
+
+  if (isUsbBridge) {
+    finalResult.partialSMARTSupport = true
+    finalResult.bridgeType = bridgeType
+    if (finalResult.unsupported || !finalResult.available) {
+      finalResult.error = 'SMART Passthrough Blocked by USB Controller'
+    }
+  } else if (finalResult.unsupported || !finalResult.available || (finalResult.attributes?.length ?? 0) === 0) {
+    finalResult.error = 'SMART Unsupported'
+  }
+
+  return finalResult
 }

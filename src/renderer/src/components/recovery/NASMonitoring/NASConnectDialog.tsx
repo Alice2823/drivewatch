@@ -51,6 +51,22 @@ export const NASConnectDialog: React.FC<Props> = ({ device, onConnect, onClose, 
   const [enableSmart, setEnableSmart] = useState(true)
   const [enableLive, setEnableLive] = useState(true)
 
+  // Load saved credentials on mount (Remember Identity feature)
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('drivewatch_nas_credentials') || '{}')
+      const creds = saved[device.id]
+      if (creds) {
+        setUsername(creds.username || '')
+        setPassword(creds.password ? atob(creds.password) : '')
+        setProtocol(creds.protocol || 'smb')
+        if (creds.shareName) setShareName(creds.shareName)
+        if (creds.port) setCustomPort(String(creds.port))
+        setRemember(true)
+      }
+    } catch {}
+  }, [device.id])
+
   // Test connection state
   const [testResult, setTestResult] = useState<TestResult | null>(null)
   const [isTesting, setIsTesting] = useState(false)
@@ -155,48 +171,54 @@ export const NASConnectDialog: React.FC<Props> = ({ device, onConnect, onClose, 
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/90 animate-fade-in" onClick={onClose}>
-      <div className="glass-card w-full max-w-xl max-h-[90vh] flex flex-col border-white/10 shadow-lg m-6 overflow-hidden" onClick={e => e.stopPropagation()}>
+      <div className="glass-card w-full max-w-xl max-h-[90vh] flex flex-col border-white/10 shadow-2xl m-6 overflow-hidden relative group" onClick={e => e.stopPropagation()}>
+        {/* Decorative Background Glow */}
+        <div className="absolute -top-20 -right-20 w-64 h-64 bg-primary/5 rounded-full blur-[100px] opacity-30 group-hover:opacity-50 transition-opacity" />
+        <div className="absolute -bottom-20 -left-20 w-64 h-64 bg-primary/5 rounded-full blur-[100px] opacity-30 group-hover:opacity-50 transition-opacity" />
+
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-primary/10 border border-primary/20 relative">
-              <Link2 className="w-5 h-5 text-primary" />
-              {(isTesting || isConnecting) && <div className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-primary animate-pulse" />}
+        <div className="flex items-center justify-between px-8 py-6 border-b border-white/5 shrink-0 z-10 bg-white/[0.01]">
+          <div className="flex items-center gap-4">
+            <div className="p-3 rounded-2xl bg-primary/10 border border-primary/20 relative shadow-[0_0_20px_rgba(6,182,212,0.1)]">
+              <Link2 className="w-6 h-6 text-primary" />
+              {(isTesting || isConnecting) && <div className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-primary animate-pulse shadow-[0_0_10px_rgba(6,182,212,1)]" />}
             </div>
             <div>
-              <h3 className="text-base font-black text-foreground">Connect to {device.name}</h3>
-              <div className="flex items-center gap-2 mt-0.5">
-                <span className="text-[10px] font-bold text-muted uppercase tracking-widest">{device.ip}</span>
-                <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-success/10 border border-success/20">
+              <h3 className="text-xl font-black text-foreground tracking-tight uppercase italic">Connect <span className="text-primary tracking-normal not-italic lowercase">to</span> NAS</h3>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-[10px] font-black text-muted uppercase tracking-[0.2em]">{device.ip}</span>
+                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-success/10 border border-success/20">
                   <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
-                  <span className="text-[8px] font-black text-success uppercase">Online</span>
+                  <span className="text-[8px] font-black text-success uppercase tracking-widest">Target Online</span>
                 </div>
               </div>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 rounded-xl hover:bg-white/10 transition-colors text-muted hover:text-foreground"><X className="w-5 h-5" /></button>
+          <button onClick={onClose} className="p-3 rounded-2xl hover:bg-white/10 transition-all text-muted hover:text-foreground active:scale-95"><X className="w-5 h-5" /></button>
         </div>
 
-        <div className="overflow-y-auto flex-1">
-          <form onSubmit={handleSubmit} className="p-6 flex flex-col gap-4">
+        <div className="overflow-y-auto flex-1 custom-scrollbar z-10">
+          <form onSubmit={handleSubmit} className="p-8 flex flex-col gap-6">
             {/* Connection History */}
             {history.length > 0 && (
-              <div>
-                <button type="button" onClick={() => setShowHistory(!showHistory)} className="flex items-center gap-2 text-[10px] font-black text-muted uppercase tracking-widest hover:text-foreground transition-colors w-full">
-                  <History className="w-3.5 h-3.5" /> Recent Connections
+              <div className="animate-fade-in">
+                <button type="button" onClick={() => setShowHistory(!showHistory)} className="flex items-center gap-2 text-[10px] font-black text-muted uppercase tracking-[0.2em] hover:text-primary transition-colors w-full group/hist">
+                  <History className="w-3.5 h-3.5 group-hover/hist:rotate-[-45deg] transition-transform" /> Recent Profiles
                   {showHistory ? <ChevronUp className="w-3 h-3 ml-auto" /> : <ChevronDown className="w-3 h-3 ml-auto" />}
                 </button>
                 {showHistory && (
-                  <div className="mt-2 flex flex-col gap-1.5 animate-fade-in">
+                  <div className="mt-3 flex flex-col gap-2 animate-slide-down">
                     {history.map((h, i) => (
                       <button key={i} type="button" onClick={() => applyHistory(h)}
-                        className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] hover:border-white/10 transition-all text-left">
-                        <RefreshCcw className="w-3.5 h-3.5 text-primary shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <span className="text-[11px] font-bold text-foreground">{h.ip}</span>
-                          <span className="text-[9px] font-bold text-muted ml-2 uppercase">{h.protocol} {h.share && `· ${h.share}`}</span>
+                        className="flex items-center gap-4 p-4 rounded-2xl bg-white/[0.02] border border-white/5 hover:bg-primary/5 hover:border-primary/20 transition-all text-left group/item">
+                        <div className="p-2 rounded-lg bg-white/5 text-muted group-hover/item:text-primary transition-colors">
+                          <RefreshCcw className="w-4 h-4" />
                         </div>
-                        <span className="text-[9px] text-muted/50 font-bold shrink-0">{new Date(h.lastConnected).toLocaleDateString()}</span>
+                        <div className="flex-1 min-w-0">
+                          <span className="text-xs font-bold text-foreground block">{h.ip}</span>
+                          <span className="text-[9px] font-black text-muted uppercase tracking-widest mt-0.5 block">{h.protocol} {h.share && `// ${h.share}`}</span>
+                        </div>
+                        <span className="text-[9px] text-muted/30 font-black uppercase tracking-tighter shrink-0">{new Date(h.lastConnected).toLocaleDateString()}</span>
                       </button>
                     ))}
                   </div>
@@ -204,85 +226,84 @@ export const NASConnectDialog: React.FC<Props> = ({ device, onConnect, onClose, 
               </div>
             )}
 
-            {/* Protocol */}
-            <div className="flex flex-col gap-2">
-              <label className="text-[10px] font-black text-muted uppercase tracking-widest">Protocol</label>
-              <div className="flex gap-3">
+            {/* Protocol Selector */}
+            <div className="flex flex-col gap-3">
+              <label className="text-[10px] font-black text-muted uppercase tracking-[0.2em] ml-1">Transmission Protocol</label>
+              <div className="flex gap-4">
                 {(['smb', 'ssh'] as NASProtocol[]).map(p => (
                   <button key={p} type="button" onClick={() => { setProtocol(p); setTestResult(null) }}
-                    className={`flex-1 py-3 rounded-xl font-black uppercase tracking-widest text-[11px] border transition-all flex items-center justify-center gap-2 ${
-                      protocol === p ? 'bg-primary/10 border-primary/40 text-primary' : 'bg-white/5 border-white/5 text-muted hover:bg-white/10'
+                    className={`flex-1 py-4 rounded-2xl font-black uppercase tracking-[0.2em] text-[11px] border transition-all flex items-center justify-center gap-3 relative overflow-hidden group/btn ${
+                      protocol === p 
+                        ? 'bg-primary/10 border-primary/40 text-primary shadow-[0_0_20px_rgba(6,182,212,0.1)]' 
+                        : 'bg-white/5 border-white/5 text-muted hover:bg-white/10 hover:border-white/20'
                     }`}>
-                    {p === 'smb' ? <Server className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+                    {protocol === p && <div className="absolute inset-0 bg-primary/5 animate-pulse" />}
+                    {p === 'smb' ? <Server className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
                     {p.toUpperCase()}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Share Name (SMB) */}
-            {protocol === 'smb' && (
-              <div className="flex flex-col gap-2">
-                <label className="text-[10px] font-black text-muted uppercase tracking-widest">Share Name</label>
-                <div className="relative">
-                  <Server className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
-                  {testResult?.phase === 'done' && testResult.shares.length > 0 ? (
-                    <select value={shareName} onChange={e => setShareName(e.target.value)}
-                      className="w-full pl-10 pr-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm font-bold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 appearance-none cursor-pointer">
-                      <option value="" className="bg-zinc-900 text-white">Select a share...</option>
-                      {testResult.shares.map(s => <option key={s} value={s} className="bg-zinc-900 text-white">{s}</option>)}
-                    </select>
-                  ) : (
-                    <input type="text" value={shareName} onChange={e => setShareName(e.target.value)}
-                      placeholder={device.shares?.[0] || 'e.g. shared'}
-                      className="w-full pl-10 pr-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm font-bold text-foreground placeholder:text-muted/50 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/30" />
-                  )}
-                </div>
-                {device.shares && device.shares.length > 0 && !testResult?.shares?.length && (
-                  <div className="flex gap-2 flex-wrap mt-1">
-                    {device.shares.map(s => (
-                      <button key={s} type="button" onClick={() => setShareName(s)}
-                        className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border transition-all ${
-                          shareName === s ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-white/5 border-white/5 text-muted hover:bg-white/10'
-                        }`}>{s}</button>
-                    ))}
+            {/* Form Fields Container */}
+            <div className="grid grid-cols-1 gap-5">
+              {/* Share Name (SMB Only) */}
+              {protocol === 'smb' && (
+                <div className="flex flex-col gap-2 animate-fade-in">
+                  <label className="text-[10px] font-black text-muted uppercase tracking-[0.2em] ml-1">Target Network Share</label>
+                  <div className="relative group/input">
+                    <div className="absolute left-4 top-1/2 -translate-y-1/2 transition-colors group-focus-within/input:text-primary">
+                      <Server className="w-4 h-4 text-muted" />
+                    </div>
+                    {testResult?.phase === 'done' && testResult.shares.length > 0 ? (
+                      <select value={shareName} onChange={e => setShareName(e.target.value)}
+                        className="w-full pl-12 pr-4 py-4 rounded-2xl bg-white/5 border border-white/10 text-sm font-bold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 appearance-none cursor-pointer hover:bg-white/10 transition-all">
+                        <option value="" className="bg-zinc-900 text-white">Select discovered share...</option>
+                        {testResult.shares.map(s => <option key={s} value={s} className="bg-zinc-900 text-white">{s}</option>)}
+                      </select>
+                    ) : (
+                      <input type="text" value={shareName} onChange={e => setShareName(e.target.value)}
+                        placeholder={device.shares?.[0] || 'e.g. storage'}
+                        className="w-full pl-12 pr-4 py-4 rounded-2xl bg-white/5 border border-white/10 text-sm font-bold text-foreground placeholder:text-muted/30 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/30 transition-all" />
+                    )}
                   </div>
-                )}
-              </div>
-            )}
+                </div>
+              )}
 
-            {/* Username */}
-            <div className="flex flex-col gap-2">
-              <label className="text-[10px] font-black text-muted uppercase tracking-widest">Username</label>
-              <input type="text" value={username} onChange={e => setUsername(e.target.value)} placeholder="admin"
-                className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm font-bold text-foreground placeholder:text-muted/50 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/30" />
+              <div className="grid grid-cols-2 gap-5">
+                {/* Username */}
+                <div className="flex flex-col gap-2">
+                  <label className="text-[10px] font-black text-muted uppercase tracking-[0.2em] ml-1">Account Username</label>
+                  <input type="text" value={username} onChange={e => setUsername(e.target.value)} placeholder="admin"
+                    className="w-full px-5 py-4 rounded-2xl bg-white/5 border border-white/10 text-sm font-bold text-foreground placeholder:text-muted/30 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/30 transition-all" />
+                </div>
+
+                {/* Password */}
+                <div className="flex flex-col gap-2">
+                  <label className="text-[10px] font-black text-muted uppercase tracking-[0.2em] ml-1">Access Credentials</label>
+                  <div className="relative group/input">
+                    <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••"
+                      className="w-full px-5 pr-12 py-4 rounded-2xl bg-white/5 border border-white/10 text-sm font-bold text-foreground placeholder:text-muted/30 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/30 transition-all" />
+                    <button type="button" onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-4 top-1/2 -translate-y-1/2 p-1.5 rounded-lg hover:bg-white/10 transition-colors text-muted hover:text-primary">
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
 
-            {/* Password with toggle */}
-            <div className="flex flex-col gap-2">
-              <label className="text-[10px] font-black text-muted uppercase tracking-widest">Password</label>
-              <div className="relative">
-                <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
-                <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••"
-                  className="w-full pl-10 pr-12 py-3 rounded-xl bg-white/5 border border-white/10 text-sm font-bold text-foreground placeholder:text-muted/50 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/30" />
-                <button type="button" onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-lg hover:bg-white/10 transition-colors text-muted hover:text-foreground">
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-
-            {/* Remember + Security Indicator */}
-            <div className="flex items-center justify-between">
+            {/* Remember + Security */}
+            <div className="flex items-center justify-between px-2">
               <label className="flex items-center gap-3 cursor-pointer group" onClick={() => setRemember(!remember)}>
-                <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-all ${
-                  remember ? 'bg-primary border-primary/40' : 'bg-white/5 border-white/10 group-hover:border-white/30'
+                <div className={`w-5 h-5 rounded-lg border transition-all duration-300 flex items-center justify-center ${
+                  remember ? 'bg-primary border-primary shadow-[0_0_15px_rgba(6,182,212,0.3)]' : 'bg-white/5 border-white/10 group-hover:border-primary/40'
                 }`}>{remember && <span className="text-background text-[10px] font-black">✓</span>}</div>
-                <span className="text-[11px] font-bold text-muted">Remember credentials</span>
+                <span className="text-[11px] font-black text-muted uppercase tracking-widest group-hover:text-foreground transition-colors">Remember identity</span>
               </label>
-              <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-success/5 border border-success/10">
-                <Shield className="w-3 h-3 text-success" />
-                <span className="text-[8px] font-black text-success uppercase tracking-wider">Encrypted</span>
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/5 border border-primary/20 shadow-[0_0_15px_rgba(6,182,212,0.05)]">
+                <Shield className="w-3.5 h-3.5 text-primary" />
+                <span className="text-[9px] font-black text-primary uppercase tracking-[0.2em]">AES-256 Encrypted</span>
               </div>
             </div>
 

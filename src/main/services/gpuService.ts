@@ -38,8 +38,24 @@ function normalizeGpuStats(data: any): GpuStats[] {
     vramUsed: Math.max(0, Math.round(Number(g.vramUsed) || 0)),
     vramTotal: Math.max(0, Math.round(Number(g.vramTotal) || 0)),
     name: g.name || 'Unknown GPU',
-    temperature: typeof g.temperature === 'number' ? g.temperature : null
+    temperature: typeof g.temperature === 'number' && g.temperature > 0 ? g.temperature : readGpuTempFromThermalFile()
   }))
+}
+
+/** Read GPU temperature from the shared thermal monitor file (written by elevated helper) */
+function readGpuTempFromThermalFile(): number | null {
+  try {
+    const os = require('os')
+    const thermalFile = path.join(os.tmpdir(), 'drivewatch_thermal.json')
+    if (!require('fs').existsSync(thermalFile)) return null
+    const raw = require('fs').readFileSync(thermalFile, 'utf8')
+    const data = JSON.parse(raw)
+    if (data.timestamp && Date.now() - data.timestamp < 10000) {
+      // For iGPUs (AMD APU), GPU temp = CPU temp (same die)
+      return data.gpuTemp ?? data.cpuTemp ?? null
+    }
+  } catch {}
+  return null
 }
 
 export async function warmGpuService() {
@@ -227,6 +243,36 @@ try {
       vramTotal = [math]::Round($adapterRam / 1MB)
       temperature = $null
     }
+  }
+
+  # Attempt to read GPU temperature
+  # Method 1: WMI thermal zones (requires admin)
+  $gpuTemp = $null
+  try {
+    $thermalZones = @(Get-CimInstance -Namespace root/WMI -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction SilentlyContinue)
+    if ($thermalZones.Count -gt 0) {
+      $temps = @($thermalZones | ForEach-Object { [math]::Round(($_.CurrentTemperature - 2732) / 10.0) } | Where-Object { $_ -gt 0 -and $_ -lt 120 })
+      if ($temps.Count -gt 1) {
+        $gpuTemp = [int]$temps[1]
+      } elseif ($temps.Count -eq 1) {
+        $gpuTemp = [int]$temps[0]
+      }
+    }
+  } catch {}
+
+  # Method 2: OpenHardwareMonitor WMI (if running)
+  if ($null -eq $gpuTemp) {
+    try {
+      $ohmGpu = Get-CimInstance -Namespace root/OpenHardwareMonitor -ClassName Sensor -ErrorAction SilentlyContinue | Where-Object { $_.SensorType -eq 'Temperature' -and $_.Name -match 'GPU|Radeon|GeForce' } | Select-Object -First 1
+      if ($ohmGpu -and $ohmGpu.Value -gt 0) {
+        $gpuTemp = [int]$ohmGpu.Value
+      }
+    } catch {}
+  }
+
+  # Assign temperature to GPU outputs
+  if ($null -ne $gpuTemp -and $output.Count -gt 0) {
+    $output[0].temperature = $gpuTemp
   }
 
   $output | ConvertTo-Json -Compress

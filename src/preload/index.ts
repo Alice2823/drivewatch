@@ -4,7 +4,9 @@ import { electronAPI } from '@electron-toolkit/preload'
 const electron = {
   ...electronAPI,
   shell: {
-    openExternal: (url: string) => shell.openExternal(url)
+    openExternal: (url: string) => shell.openExternal(url),
+    openPath: (path: string) => shell.openPath(path),
+    showItemInFolder: (path: string) => shell.showItemInFolder(path)
   }
 }
 
@@ -13,6 +15,7 @@ const api = {
   getDiskData: () => ipcRenderer.invoke('get-disk-data'),
   getSystemStats: () => ipcRenderer.invoke('get-system-stats'),
   getGpuStats: () => ipcRenderer.invoke('get-gpu-stats'),
+  getFanRpm: () => ipcRenderer.invoke('get-fan-rpm'),
   isAdmin: () => ipcRenderer.invoke('is-admin'),
 
   // Scan operations
@@ -129,7 +132,95 @@ const api = {
     testConnection: (config: any) => ipcRenderer.invoke('nas:test-connection', config),
     ping: (host: string) => ipcRenderer.invoke('nas:ping', host),
     getStorageInfo: (host: string, shareName?: string) => ipcRenderer.invoke('nas:storage-info', host, shareName),
-    fetchData: (config: any) => ipcRenderer.invoke('nas:fetch-data', config)
+    fetchData: (config: any) => ipcRenderer.invoke('nas:fetch-data', config),
+    getIoStats: (config: any) => ipcRenderer.invoke('nas:io-stats', config)
+  },
+  diagnostics: {
+    scan: (forceRefresh?: boolean) => ipcRenderer.invoke('diagnostics:scan', forceRefresh),
+    exportReport: () => ipcRenderer.invoke('diagnostics:export'),
+    exportJson: () => ipcRenderer.invoke('diagnostics:export-json')
+  },
+  surfaceScan: {
+    start: (diskIndex: number, mode: string, model?: string, serial?: string, devicePath?: string, executionMode?: string) => ipcRenderer.send('surface:start', diskIndex, mode, model, serial, devicePath, executionMode),
+    pause: (diskIndex: number) => ipcRenderer.send('surface:pause', diskIndex),
+    resume: (diskIndex: number) => ipcRenderer.send('surface:resume', diskIndex),
+    stop: (diskIndex: number) => ipcRenderer.send('surface:stop', diskIndex),
+    isActive: (diskIndex: number) => ipcRenderer.invoke('surface:is-active', diskIndex),
+    getLastResult: (diskIndex: number, model?: string, serial?: string, devicePath?: string) => ipcRenderer.invoke('surface:get-last-result', diskIndex, model, serial, devicePath),
+    onProgress: (callback: (data: any) => void) => {
+      const handler = (_: any, data: any) => callback(data)
+      ipcRenderer.on('surface:progress', handler)
+      return () => ipcRenderer.removeListener('surface:progress', handler)
+    },
+    onDone: (callback: (data: any) => void) => {
+      const handler = (_: any, data: any) => callback(data)
+      ipcRenderer.on('surface:done', handler)
+      return () => ipcRenderer.removeListener('surface:done', handler)
+    },
+    onError: (callback: (msg: string) => void) => {
+      const handler = (_: any, msg: string) => callback(msg)
+      ipcRenderer.on('surface:error', handler)
+      return () => ipcRenderer.removeListener('surface:error', handler)
+    }
+  },
+  stabilizer: {
+    start: (diskIndex: number, mode: string) => ipcRenderer.send('stabilizer:start', diskIndex, mode),
+    pause: (diskIndex: number) => ipcRenderer.send('stabilizer:pause', diskIndex),
+    resume: (diskIndex: number) => ipcRenderer.send('stabilizer:resume', diskIndex),
+    stop: (diskIndex: number) => ipcRenderer.send('stabilizer:stop', diskIndex),
+    isActive: (diskIndex: number) => ipcRenderer.invoke('stabilizer:is-active', diskIndex),
+    onProgress: (callback: (data: any) => void) => {
+      const handler = (_: any, data: any) => callback(data)
+      ipcRenderer.on('stabilizer:progress', handler)
+      return () => ipcRenderer.removeListener('stabilizer:progress', handler)
+    },
+    onDone: (callback: (data: any) => void) => {
+      const handler = (_: any, data: any) => callback(data)
+      ipcRenderer.on('stabilizer:done', handler)
+      return () => ipcRenderer.removeListener('stabilizer:done', handler)
+    },
+    onError: (callback: (msg: string) => void) => {
+      const handler = (_: any, msg: string) => callback(msg)
+      ipcRenderer.on('stabilizer:error', handler)
+      return () => ipcRenderer.removeListener('stabilizer:error', handler)
+    }
+  },
+  // ── Background Task Registry ──────────────────────────────────────────────
+  tasks: {
+    getAll: () => ipcRenderer.invoke('tasks:get-all'),
+    getActive: () => ipcRenderer.invoke('tasks:get-active'),
+    requestSnapshot: () => ipcRenderer.send('tasks:request-snapshot'),
+    remove: (taskId: string) => ipcRenderer.send('tasks:remove', taskId),
+    onList: (callback: (tasks: any[]) => void) => {
+      const handler = (_: any, tasks: any[]) => callback(tasks)
+      ipcRenderer.on('tasks:list', handler)
+      return () => ipcRenderer.removeListener('tasks:list', handler)
+    },
+    onCreated: (callback: (task: any) => void) => {
+      const handler = (_: any, task: any) => callback(task)
+      ipcRenderer.on('tasks:created', handler)
+      return () => ipcRenderer.removeListener('tasks:created', handler)
+    },
+    onProgress: (callback: (data: any) => void) => {
+      const handler = (_: any, data: any) => callback(data)
+      ipcRenderer.on('tasks:progress', handler)
+      return () => ipcRenderer.removeListener('tasks:progress', handler)
+    },
+    onStatus: (callback: (data: any) => void) => {
+      const handler = (_: any, data: any) => callback(data)
+      ipcRenderer.on('tasks:status', handler)
+      return () => ipcRenderer.removeListener('tasks:status', handler)
+    },
+    onTick: (callback: (data: any) => void) => {
+      const handler = (_: any, data: any) => callback(data)
+      ipcRenderer.on('tasks:tick', handler)
+      return () => ipcRenderer.removeListener('tasks:tick', handler)
+    },
+    onRemoved: (callback: (data: any) => void) => {
+      const handler = (_: any, data: any) => callback(data)
+      ipcRenderer.on('tasks:removed', handler)
+      return () => ipcRenderer.removeListener('tasks:removed', handler)
+    }
   }
 }
 

@@ -34,12 +34,15 @@ export interface SmartAttr {
 interface SmartResult {
   available: boolean
   fallback: boolean
-  overallHealth: 'PASSED' | 'FAILED' | 'Unknown'
+  overallHealth: 'PASSED' | 'FAILED' | 'Unknown' | 'Unsupported'
   temperature: number | null
   powerOnHours: number | null
   attributes: SmartAttr[]
   issues: string[]
   error?: string
+  unsupported?: boolean
+  stale?: boolean
+  cachedAt?: number
 }
 
 interface ChkdskResult {
@@ -54,7 +57,7 @@ interface ChkdskResult {
 }
 
 interface HealthScore {
-  score: number
+  score: number | null
   status: 'PASSED' | 'WARNING' | 'FAILED' | 'UNKNOWN'
   issues: string[]
   summary: string
@@ -91,7 +94,8 @@ function formatBytes(bytes: number): string {
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sz[i]}`
 }
 
-function scoreColor(score: number): string {
+function scoreColor(score: number | null): string {
+  if (score === null) return 'var(--color-muted)'
   if (score >= 80) return 'var(--color-success)'
   if (score >= 50) return 'var(--color-warning)'
   return 'var(--color-accent)'
@@ -106,13 +110,14 @@ function scoreBgClass(status: string): string {
 
 // ── Arc SVG for health score ──────────────────────────────────────────────────
 
-const ScoreArc: React.FC<{ score: number; status: string }> = ({ score, status }) => {
+const ScoreArc: React.FC<{ score: number | null; status: string }> = ({ score, status }) => {
   const r = 54
   const cx = 64
   const cy = 64
   const circumference = 2 * Math.PI * r
   const arcLength = circumference * 0.75
-  const dash = (score / 100) * arcLength
+  const numericScore = score ?? 0
+  const dash = (numericScore / 100) * arcLength
   const gap = arcLength - dash
   const rotation = 135
   const color = scoreColor(score)
@@ -143,11 +148,11 @@ const ScoreArc: React.FC<{ score: number; status: string }> = ({ score, status }
       {/* Score text */}
       <text x={cx} y={cy - 4} textAnchor="middle" fill="var(--color-foreground)"
         fontSize="24" fontWeight="800" fontFamily="Inter, sans-serif">
-        {score}
+        {score === null ? 'N/A' : score}
       </text>
       <text x={cx} y={cy + 16} textAnchor="middle" fill="var(--color-muted)"
         fontSize="11" fontWeight="700" fontFamily="Inter, sans-serif">
-        / 100
+        {score === null ? '' : '/ 100'}
       </text>
     </svg>
   )
@@ -217,7 +222,7 @@ const DriveCard: React.FC<{
       </div>
       {score ? (
         <div className={`flex-shrink-0 px-2.5 py-1 rounded-full border text-[10px] font-extrabold uppercase tracking-wider ${scoreBgClass(score.status)}`}>
-          {score.score}%
+          {score.score === null ? 'N/A' : `${score.score}%`}
         </div>
       ) : (
         <div className="flex-shrink-0 px-2.5 py-1 rounded-full border border-border text-[10px] font-extrabold uppercase tracking-wider text-muted">
@@ -520,7 +525,7 @@ export const DriveHealthScanner: React.FC = () => {
                 </div>
               ) : (
                 <div className="mt-6 flex flex-col items-center opacity-50">
-                  <ScoreArc score={0} status="UNKNOWN" />
+                  <ScoreArc score={null} status="UNKNOWN" />
                   <div className="mt-4 px-4 py-1.5 rounded-full border border-border text-xs font-bold uppercase tracking-wider text-muted">
                     Not Scanned
                   </div>
@@ -543,6 +548,17 @@ export const DriveHealthScanner: React.FC = () => {
                 value={formatHours(activeState.smart?.powerOnHours ?? null)}
                 accent="primary"
               />
+              <MetricCard
+                icon={<HardDrive className="w-5 h-5" />}
+                label="Capacity"
+                value={activeState.drive.size > 0
+                  ? (activeState.drive.size >= 1000 * 1024 * 1024 * 1024
+                    ? `${(activeState.drive.size / (1024 * 1024 * 1024 * 1024)).toFixed(1)} TB`
+                    : `${Math.round(activeState.drive.size / (1024 * 1024 * 1024))} GB`)
+                  : 'Unknown'}
+                accent="primary"
+                sub={activeState.drive.type || 'Storage Device'}
+              />
               <div className="glass-card p-5 flex flex-col gap-3">
                  <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -553,7 +569,7 @@ export const DriveHealthScanner: React.FC = () => {
                     </div>
                     {activeState.smart?.fallback && (
                       <span className="px-2 py-0.5 rounded-md bg-warning/10 border border-warning/20 text-warning text-[9px] font-bold uppercase">
-                        {activeState.drive.isRemovable ? 'USB Restricted' : 'WMI Fallback'}
+                        {activeState.smart.unsupported ? 'Unsupported' : activeState.smart.stale ? 'Cached' : 'WMI Fallback'}
                       </span>
                     )}
                  </div>
@@ -572,8 +588,8 @@ export const DriveHealthScanner: React.FC = () => {
                         <span className="text-[20px] font-black text-foreground">{activeState.score.status}</span>
                       </div>
                       <span className="text-xs text-muted mt-1">
-                        {activeState.score.status === 'UNKNOWN' && activeState.drive.isRemovable
-                          ? 'SMART data pass-through is often blocked by USB enclosures.'
+                        {activeState.score.status === 'UNKNOWN' && activeState.smart?.unsupported
+                          ? 'SMART data is N/A. This device or USB bridge does not expose SMART telemetry.'
                           : activeState.score.summary}
                       </span>
                    </div>

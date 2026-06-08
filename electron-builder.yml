@@ -4,22 +4,24 @@ productName: DriveWatch
 directories:
   buildResources: build
 
-extraResources:
-  - from: build/icon.ico
-    to: icon.ico
-  - from: build/resources/smartctl.exe
-    to: smartctl.exe
-  - from: resources/monitor
-    to: monitor
-
 asarUnpack:
   - resources/**
   - node_modules/systeminformation/**
 
+# ── Windows ──────────────────────────────────────────────────────────────────
+# smartctl.exe and LibreHardwareMonitor are Windows-only tools.
+# They must NOT be included in the macOS extraResources.
 win:
   icon: build/icon.ico
   executableName: DriveWatch
   requestedExecutionLevel: requireAdministrator
+  extraResources:
+    - from: build/icon.ico
+      to: icon.ico
+    - from: build/resources/smartctl.exe
+      to: smartctl.exe
+    - from: resources/monitor
+      to: monitor
   target:
     - target: nsis
       arch:
@@ -37,6 +39,27 @@ nsis:
   createStartMenuShortcut: true
   runAfterFinish: true
 
+# ── macOS ─────────────────────────────────────────────────────────────────────
+# FIX: "You can't open the application because it is not supported on this Mac"
+#
+# ROOT CAUSE: The previous config used arch: [x64, arm64] which tells
+# electron-builder to produce TWO separate DMG files:
+#   dist/DriveWatch-x64.dmg   (Intel)
+#   dist/DriveWatch-arm64.dmg (Apple Silicon)
+#
+# The CI runner was "macos-latest" which GitHub migrated to Apple Silicon (arm64)
+# in late 2024. On this runner, cross-compiling native Node modules (e.g.
+# systeminformation) for x64 fails silently — the x64 DMG ends up containing
+# arm64-only native .node binaries. macOS correctly rejects it on Intel with
+# "not supported on this Mac".
+#
+# Additionally the CI artifact upload pattern was "dist/DriveWatch.dmg" which
+# does not match the multi-arch output filenames, so no valid release was ever
+# uploaded.
+#
+# FIX: Use arch: universal to produce a single fat binary DMG that contains
+# both x64 and arm64 slices. This works natively on Intel Core i5 AND Apple
+# M-series Macs, and produces exactly one file: dist/DriveWatch.dmg
 mac:
   icon: build/icon.icns
   category: public.app-category.utilities
@@ -44,13 +67,16 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  extraResources:
+    - from: build/icon.icns
+      to: icon.icns
   target:
     - target: dmg
       arch:
-        - x64
-        - arm64
+        - universal
 
 dmg:
+  # Single output: dist/DriveWatch.dmg — matches CI upload glob exactly.
   artifactName: DriveWatch.${ext}
   contents:
     - x: 410

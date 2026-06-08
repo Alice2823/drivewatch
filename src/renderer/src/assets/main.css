@@ -22,6 +22,7 @@
   --color-accent: #ec4899;
   --color-success: #10b981;
   --color-warning: #f59e0b;
+  --color-danger: #ef4444;
   --color-muted: #71717a;
   --color-surface: rgba(255, 255, 255, 0.03);
   --color-surface-hover: rgba(255, 255, 255, 0.06);
@@ -45,6 +46,7 @@
   --color-accent: #ec4899;
   --color-success: #10b981;
   --color-warning: #f59e0b;
+  --color-danger: #ef4444;
   --color-muted: #71717a;
   --color-surface: rgba(255, 255, 255, 0.03);
   --color-surface-hover: rgba(255, 255, 255, 0.06);
@@ -66,6 +68,7 @@
   --color-accent: var(--color-accent);
   --color-success: var(--color-success);
   --color-warning: var(--color-warning);
+  --color-danger: var(--color-danger);
   --color-muted: var(--color-muted);
   --color-surface: var(--color-surface);
   --color-surface-hover: var(--color-surface-hover);

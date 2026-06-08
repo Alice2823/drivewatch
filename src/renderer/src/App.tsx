@@ -5,7 +5,10 @@ import { Sidebar } from './components/Sidebar'
 import { DiskCard } from './components/DiskCard'
 import { DriveScanner } from './components/DriveScanner'
 import { DriveHealthScanner } from './components/DriveHealthScanner'
+import { DiskSurfaceScanner } from './components/DiskSurfaceScanner'
+import { StorageHealthCenter } from './components/StorageHealthCenter'
 import { CircularProgress } from './components/CircularProgress'
+import { CpuFanWidget } from './components/CpuFanWidget'
 
 import { AreaChart, Area, ResponsiveContainer, YAxis, CartesianGrid } from 'recharts'
 import { UpdatePanel } from './components/UpdatePanel'
@@ -13,9 +16,11 @@ import { StorageExplorer } from './components/StorageExplorer/StorageExplorer'
 import { DriveLifespanPanel } from './components/explore/DriveLifespanPanel'
 import { RecoveryLab } from './components/recovery/RecoveryLab'
 import { NASDashboard } from './components/recovery/NASMonitoring'
+import { SectorRepair } from './components/stabilizer/SectorRepair'
+import { GlobalTaskPanel } from './components/GlobalTaskPanel'
 import { formatBytes } from './utils'
 
-type TabType = 'dashboard' | 'scanner' | 'health' | 'cleanup' | 'lifespan' | 'recovery' | 'nas'
+type TabType = 'dashboard' | 'scanner' | 'health' | 'cleanup' | 'lifespan' | 'recovery' | 'nas' | 'diagnostics' | 'surface' | 'stabilizer'
 
 /**
  * 🌡️ UNIVERSAL TEMPERATURE FORMATTER
@@ -35,6 +40,7 @@ function App(): React.JSX.Element {
   const [loading, setLoading] = useState(true)
   const [isStatsReady, setIsStatsReady] = useState(false)
   const [activeTab, setActiveTab] = useState<TabType>('dashboard')
+  const [healthSubTab, setHealthSubTab] = useState<'diagnostics' | 'surface'>('diagnostics')
   const [selectedLifespanDisk, setSelectedLifespanDisk] = useState<any>(null)
   const [globalHistory, setGlobalHistory] = useState<{ val: number }[]>([])
   const [cpuHistory, setCpuHistory] = useState<{ val: number }[]>([])
@@ -115,6 +121,9 @@ function App(): React.JSX.Element {
 
         const gpus = Array.isArray(gpusRaw) ? gpusRaw : (gpusRaw ? [gpusRaw] : [])
 
+        // Derive hasGpuTemp from actual GPU data (gpuService provides temperature)
+        const anyGpuHasTemp = gpus.some((g: any) => g.temperature !== null && g.temperature > 0)
+
         // 🛡️ High-Reactivity Smoothing (0.3 prev / 0.7 current)
         const alpha = 0.7
         const smoothVal = (prev: number, curr: number) => prev * (1 - alpha) + curr * alpha
@@ -122,7 +131,7 @@ function App(): React.JSX.Element {
         prevCpuSmoothRef.current = smoothVal(prevCpuSmoothRef.current, sys.cpuUsage)
         prevRamSmoothRef.current = smoothVal(prevRamSmoothRef.current, sys.ramUsage)
 
-        setSystemStats({ ...sys, gpus })
+        setSystemStats({ ...sys, hasGpuTemp: anyGpuHasTemp || sys.hasGpuTemp, gpus })
         setIsStatsReady(true)
 
         if (activeTab !== 'dashboard') return
@@ -234,6 +243,9 @@ function App(): React.JSX.Element {
                    : activeTab === 'lifespan' ? 'Intelligence Engine'
                    : activeTab === 'recovery' ? 'Recovery Lab'
                    : activeTab === 'nas' ? 'NAS Monitoring'
+                   : activeTab === 'diagnostics' ? 'Health Center'
+                   : activeTab === 'surface' ? 'Sector Surface Scan'
+                   : activeTab === 'stabilizer' ? 'Sector Repair'
                    : 'Storage Explorer'}
                 </h2>
                 <div className="flex flex-wrap items-center gap-3 mt-4">
@@ -320,19 +332,20 @@ function App(): React.JSX.Element {
                 </div>
 
                 <div className="flex-1 space-y-4">
+                  {/* CPU Fan Sensor */}
+                  <CpuFanWidget isActive={activeTab === 'dashboard'} cpuUsage={systemStats.cpuUsage} />
+
                   {/* CPU Sensor */}
                   <div className="flex items-center justify-between p-4 rounded-2xl bg-surface/30 border border-white/5 h-[110px]">
                     <div className="flex flex-col w-40">
                       <div className="flex items-baseline gap-2">
                         <span className="text-[32px] font-black text-foreground">{Math.round(systemStats.cpuUsage)}%</span>
-                        {systemStats.hasCpuTemp && (
-                          <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-warning/15 border border-warning/30">
-                            <Thermometer className="w-3 h-3 text-warning" />
-                            <span className="text-[12px] font-black text-warning">
-                              {formatTemp(systemStats.cpuTemp, true, isStatsReady)}
-                            </span>
-                          </div>
-                        )}
+                        <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-warning/15 border border-warning/30">
+                          <Thermometer className="w-3 h-3 text-warning" />
+                          <span className="text-[12px] font-black text-warning">
+                            {systemStats.cpuTemp !== null && systemStats.cpuTemp > 0 ? `${systemStats.cpuTemp}°C` : 'N/A'}
+                          </span>
+                        </div>
                       </div>
                       <p className="text-[12px] font-bold text-muted uppercase mt-1">CPU Load</p>
                       <span className="text-[10px] font-semibold text-foreground/80 truncate mt-1">{systemStats.cpuName}</span>
@@ -369,14 +382,12 @@ function App(): React.JSX.Element {
                       <div className="flex flex-col w-40">
                         <div className="flex items-baseline gap-2">
                           <span className="text-[32px] font-black text-foreground">{Math.round(gpu.usage)}%</span>
-                          {systemStats.hasGpuTemp && (
-                            <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/15 border border-primary/30">
-                              <Thermometer className="w-3 h-3 text-primary" />
-                              <span className="text-[12px] font-black text-primary">
-                                {formatTemp(gpu.temperature, true, isStatsReady)}
-                              </span>
-                            </div>
-                          )}
+                          <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/15 border border-primary/30">
+                            <Thermometer className="w-3 h-3 text-primary" />
+                            <span className="text-[12px] font-black text-primary">
+                              {gpu.temperature !== null && gpu.temperature > 0 ? `${gpu.temperature}°C` : 'N/A'}
+                            </span>
+                          </div>
                         </div>
                         <p className="text-[12px] font-bold text-muted uppercase mt-1">GPU Load</p>
                         <span className="text-[10px] font-semibold text-foreground/80 truncate mt-1">{gpu.name}</span>
@@ -437,6 +448,9 @@ function App(): React.JSX.Element {
           {activeTab === 'scanner' && <DriveScanner drives={Array.from(new Set(disks.flatMap(d => d.mounts || []))).sort()} />}
           {activeTab === 'health' && <DriveHealthScanner />}
           {activeTab === 'cleanup' && <StorageExplorer disks={disks} />}
+          {activeTab === 'diagnostics' && <StorageHealthCenter />}
+          {activeTab === 'surface' && <DiskSurfaceScanner onNavigateToTab={setActiveTab} />}
+          {activeTab === 'stabilizer' && <SectorRepair onNavigateToTab={setActiveTab} />}
           
           {activeTab === 'lifespan' && (
             <div className="flex flex-col gap-6">
@@ -518,6 +532,7 @@ function App(): React.JSX.Element {
         </main>
       </div>
       <UpdatePanel />
+      <GlobalTaskPanel onNavigateToTab={setActiveTab} />
       </div>
     </div>
   )

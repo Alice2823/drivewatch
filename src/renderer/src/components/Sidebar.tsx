@@ -1,9 +1,9 @@
 import React from 'react'
-import { Activity, RefreshCw, ShieldCheck, HardDrive, Zap, ShieldAlert, Server } from 'lucide-react'
+import { Activity, RefreshCw, ShieldCheck, HardDrive, Zap, ShieldAlert, Server, HeartPulse, Microscope, ShieldPlus } from 'lucide-react'
 
 interface SidebarProps {
-  activeTab: 'dashboard' | 'scanner' | 'health' | 'cleanup' | 'lifespan' | 'recovery' | 'nas'
-  setActiveTab: (tab: 'dashboard' | 'scanner' | 'health' | 'cleanup' | 'lifespan' | 'recovery' | 'nas') => void
+  activeTab: 'dashboard' | 'scanner' | 'health' | 'cleanup' | 'lifespan' | 'recovery' | 'nas' | 'diagnostics' | 'surface' | 'stabilizer'
+  setActiveTab: (tab: 'dashboard' | 'scanner' | 'health' | 'cleanup' | 'lifespan' | 'recovery' | 'nas' | 'diagnostics' | 'surface' | 'stabilizer') => void
 }
 
 export const Sidebar: React.FC<SidebarProps> = React.memo(({ activeTab, setActiveTab }) => {
@@ -21,7 +21,10 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({ activeTab, setActiv
     { id: 'cleanup', label: 'Explorer', icon: HardDrive },
     { id: 'lifespan', label: 'Lifespan', icon: Zap },
     { id: 'recovery', label: 'Recovery', icon: ShieldAlert },
-    { id: 'nas', label: 'NAS Monitor', icon: Server }
+    { id: 'nas', label: 'NAS Monitor', icon: Server },
+    { id: 'diagnostics', label: 'Health Center', icon: HeartPulse },
+    { id: 'surface', label: 'Sector Surface Scan', icon: Microscope },
+    { id: 'stabilizer', label: 'Sector Repair', icon: ShieldPlus },
   ]
 
   return (

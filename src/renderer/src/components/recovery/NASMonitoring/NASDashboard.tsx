@@ -48,30 +48,46 @@ export const NASDashboard: React.FC<Props> = ({ isActive }) => {
               <ArrowLeft className="w-5 h-5" />
             </button>
           )}
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-primary/10 rounded-2xl text-primary border border-primary/20">
-              <Server className="w-6 h-6" />
+          <div className="flex items-center gap-4">
+            <div className="p-4 bg-primary/10 rounded-[22px] text-primary border border-primary/20 shadow-[0_0_30px_rgba(6,182,212,0.15)] relative group/icon">
+              <div className="absolute inset-0 bg-primary/10 rounded-[22px] blur-md opacity-0 group-hover/icon:opacity-100 transition-opacity" />
+              <Server className="w-7 h-7 relative z-10" />
             </div>
             <div>
-              <h3 className="text-lg font-black text-foreground uppercase tracking-tight">
-                {activeView === 'device' && selectedDevice ? selectedDevice.name : 'NAS Disk Monitoring'}
+              <h3 className="text-2xl font-black text-foreground tracking-tight uppercase italic leading-none mb-1">
+                {activeView === 'device' && selectedDevice ? selectedDevice.name : 'Network Storage'}
               </h3>
-              <p className="text-[10px] font-bold text-muted uppercase tracking-widest">
-                {activeView === 'device' ? 'Device Dashboard' : 'Network Storage Discovery'}
-              </p>
+              <div className="flex items-center gap-2">
+                <p className="text-[10px] font-black text-muted uppercase tracking-[0.2em]">
+                  {activeView === 'device' ? 'Active Monitoring Dash' : 'Intelligent Node Discovery'}
+                </p>
+                {state.isScanning && (
+                  <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-primary/10 border border-primary/20 animate-pulse">
+                    <div className="w-1 h-1 rounded-full bg-primary" />
+                    <span className="text-[8px] font-black text-primary uppercase tracking-widest">Active Scan</span>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
         <div className="flex items-center gap-3">
           {activeView === 'overview' && (
-            <button onClick={scanNetwork} disabled={state.isScanning}
-              className={`flex items-center gap-2 px-5 py-3 rounded-xl font-black uppercase tracking-widest text-[11px] transition-all ${
+            <button 
+              onClick={scanNetwork} 
+              disabled={state.isScanning}
+              className={`flex items-center gap-3 px-6 py-3.5 rounded-2xl font-black uppercase tracking-[0.15em] text-[11px] transition-all relative overflow-hidden group/scan ${
                 state.isScanning
                   ? 'bg-white/5 text-muted border border-white/5 cursor-wait'
-                  : 'bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 hover:border-primary/40'
-              }`}>
-              {state.isScanning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-              {state.isScanning ? 'Scanning...' : 'Scan Network'}
+                  : 'bg-primary text-background hover:scale-[1.02] active:scale-[0.98] shadow-[0_10px_30px_-5px_rgba(6,182,212,0.3)]'
+              }`}
+            >
+              {state.isScanning ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Search className="w-4 h-4 group-hover:rotate-12 transition-transform" />
+              )}
+              <span>{state.isScanning ? 'Probing...' : 'Refresh Network'}</span>
             </button>
           )}
           {activeView === 'device' && selectedDevice && (
@@ -145,29 +161,57 @@ export const NASDashboard: React.FC<Props> = ({ isActive }) => {
               ))}
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center p-16 glass-card border-dashed border-white/10">
+            <div className="flex flex-col items-center justify-center py-20 px-6 rounded-[32px] bg-white/[0.02] border border-white/5 relative overflow-hidden group">
+              {/* Decorative Background Glows */}
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-primary/10 rounded-full blur-[80px] opacity-20 group-hover:opacity-40 transition-opacity duration-1000" />
+              
               {state.isScanning ? (
                 <>
-                  <div className="relative mb-6">
-                    <Server className="w-16 h-16 text-primary/30" />
-                    <div className="absolute -top-1 -right-1">
-                      <Loader2 className="w-6 h-6 text-primary animate-spin" />
+                  <div className="relative mb-8">
+                    <div className="absolute inset-0 bg-primary/20 rounded-full blur-xl animate-pulse" />
+                    <div className="relative w-20 h-20 rounded-3xl bg-surface flex items-center justify-center border border-primary/30 shadow-[0_0_40px_rgba(6,182,212,0.1)]">
+                      <Server className="w-10 h-10 text-primary/40" />
+                      <div className="absolute -top-1 -right-1 w-8 h-8 rounded-full bg-surface border border-primary/20 flex items-center justify-center">
+                        <Loader2 className="w-4 h-4 text-primary animate-spin" />
+                      </div>
                     </div>
                   </div>
-                  <p className="text-sm font-black text-muted uppercase tracking-widest mb-2">Scanning Network...</p>
-                  <p className="text-[11px] text-muted/60 font-medium">Probing local network for NAS devices</p>
+                  <div className="text-center space-y-2 z-10">
+                    <h4 className="text-lg font-black text-foreground uppercase tracking-[0.2em] animate-pulse">
+                      Discovery <span className="text-primary">Active</span>
+                    </h4>
+                    <p className="text-xs text-muted font-medium tracking-wide max-w-sm leading-relaxed">
+                      Probing local subnet for TrueNAS, Synology, and SMB-compliant storage systems...
+                    </p>
+                  </div>
                 </>
               ) : (
                 <>
-                  <Server className="w-16 h-16 text-primary/20 mb-6" />
-                  <p className="text-sm font-black text-muted uppercase tracking-widest mb-2">No NAS Devices Found</p>
-                  <p className="text-[11px] text-muted/60 font-medium text-center max-w-sm">
-                    Click "Scan Network" to discover NAS devices on your local network. Supports TrueNAS, Synology, QNAP, and SMB shares.
-                  </p>
+                  <div className="relative mb-8">
+                    <div className="absolute inset-0 bg-primary/10 rounded-full blur-2xl group-hover:bg-primary/20 transition-colors duration-700" />
+                    <div className="relative w-20 h-20 rounded-3xl bg-surface flex items-center justify-center border border-white/10 group-hover:border-primary/30 transition-all duration-500 shadow-xl">
+                      <Server className="w-10 h-10 text-primary/30 group-hover:text-primary/60 transition-colors" />
+                    </div>
+                  </div>
+                  <div className="text-center space-y-2 z-10">
+                    <h4 className="text-lg font-black text-foreground uppercase tracking-[0.2em]">
+                      No Network <span className="text-primary">Storage</span>
+                    </h4>
+                    <p className="text-xs text-muted font-medium tracking-wide max-w-[320px] mx-auto leading-relaxed">
+                      We couldn't detect any active NAS devices on your current segment. Ensure your storage server is online and reachable.
+                    </p>
+                  </div>
                   <button onClick={scanNetwork}
-                    className="mt-6 flex items-center gap-2 px-6 py-3 rounded-xl bg-primary text-background font-black uppercase tracking-widest text-[11px] hover:scale-[1.02] active:scale-[0.98] transition-transform shadow-[0_10px_30px_-10px_rgba(6,182,212,0.4)]">
-                    <Search className="w-4 h-4" /> Scan Network
+                    className="mt-10 flex items-center gap-3 px-8 py-4 rounded-2xl bg-primary text-background font-black uppercase tracking-[0.15em] text-[11px] hover:scale-[1.05] active:scale-[0.95] transition-all shadow-[0_15px_40px_-12px_rgba(6,182,212,0.5)] z-10 group/btn">
+                    <Search className="w-4 h-4 group-hover:rotate-12 transition-transform" /> 
+                    <span>Scan Network</span>
                   </button>
+                  
+                  <div className="mt-8 pt-8 border-t border-white/5 w-full max-w-xs flex justify-center gap-6 opacity-30 group-hover:opacity-60 transition-opacity">
+                    <div className="text-[9px] font-bold text-muted uppercase tracking-widest">TrueNAS</div>
+                    <div className="text-[9px] font-bold text-muted uppercase tracking-widest">Synology</div>
+                    <div className="text-[9px] font-bold text-muted uppercase tracking-widest">SMB/CIFS</div>
+                  </div>
                 </>
               )}
             </div>
